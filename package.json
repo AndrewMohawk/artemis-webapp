@@ -2,6 +2,16 @@
   "name": "artemis-rf-reference",
   "version": "0.1.0",
   "private": true,
+  "license": "GPL-3.0-or-later",
+  "author": "Andrew MacPherson",
+  "homepage": "https://artemis.andrewmohawk.xyz",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AndrewMohawk/artemis-webapp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/AndrewMohawk/artemis-webapp/issues"
+  },
   "engines": {
     "node": ">=22.13.0"
   },
