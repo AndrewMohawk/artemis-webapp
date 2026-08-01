@@ -54,3 +54,24 @@ test("database versions use only real dataset values", () => {
   const versions = [...new Set(signals.map((signal) => signal.added_since))].sort((a, b) => a - b);
   assert.deepEqual(versions, [65, 70, 71, 72, 73, 74]);
 });
+
+test("search uses one case-insensitive substring across signal prose", () => {
+  const synthetic = [
+    { ...signals[0], pageid: "one", title: "Alpha beacon", "short description": "Beta channel", description: "Gamma notes", category: ["SecretCategory"], modulation: [{ value: "HiddenMode" }] },
+  ];
+  const syntheticIndex = buildSignalIndex(synthetic);
+  const search = (query) => filterSignals({
+    signals: synthetic,
+    index: syntheticIndex,
+    query,
+    filters: createDefaultFilters(),
+    savedOnly: false,
+    bookmarks,
+  });
+
+  assert.equal(search("ALPHA BEACON").length, 1);
+  assert.equal(search("beacon beta").length, 1);
+  assert.equal(search("alpha gamma").length, 0, "separate words must not behave like an AND query");
+  assert.equal(search("SecretCategory").length, 0, "facets are filtered separately from the text search");
+  assert.equal(search("HiddenMode").length, 0, "parameter values are not part of Artemis text search");
+});

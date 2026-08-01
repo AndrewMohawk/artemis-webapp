@@ -104,10 +104,6 @@ export function buildSignalIndex(signals: SignalRecord[]): SignalIndex {
         signal.title,
         signal["short description"],
         signal.description,
-        ...signal.category,
-        ...textValues(signal.modulation),
-        ...textValues(signal.mode),
-        ...textValues(signal.location),
       ].join(" ").toLocaleLowerCase(),
       frequency: numericValues(signal.frequency),
       bandwidth: numericValues(signal.bandwidth),
@@ -172,11 +168,11 @@ export function filterSignals({
   savedOnly: boolean;
   bookmarks: Set<string>;
 }) {
-  const terms = query.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
+  const term = query.toLocaleLowerCase().trim();
   const result = signals.filter((signal) => {
     const entry = index.get(signal.pageid);
     if (!entry) return false;
-    if (terms.length && !terms.every((term) => entry.searchText.includes(term))) return false;
+    if (term && !entry.searchText.includes(term)) return false;
     if (savedOnly && !bookmarks.has(signal.pageid)) return false;
     if (!matchesAny(entry.categories, filters.categories)) return false;
     if (!matchesAny(entry.modulations, filters.modulations)) return false;
@@ -189,12 +185,6 @@ export function filterSignals({
     return true;
   });
 
-  if (terms.length) {
-    result.sort((a, b) => {
-      const aStarts = a.title.toLocaleLowerCase().startsWith(terms[0]) ? 0 : 1;
-      const bStarts = b.title.toLocaleLowerCase().startsWith(terms[0]) ? 0 : 1;
-      return aStarts - bStarts || a.title.localeCompare(b.title);
-    });
-  }
+  result.sort((a, b) => a.title.localeCompare(b.title));
   return result;
 }

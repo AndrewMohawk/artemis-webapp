@@ -32,8 +32,7 @@ test("server-renders the Artemis signal workspace", async () => {
 
   const html = await response.text();
   assert.match(html, /<title>Artemis — RF Signal Reference<\/title>/i);
-  assert.match(html, /Relocatable Over-the-Horizon Radar \(ROTHR\)/);
-  assert.match(html, /identify 583 radio-frequency signals/);
+  assert.match(html, /CATALOG LOADING/);
   assert.match(html, /Category \/ tag/);
   assert.match(html, /Bandwidth/);
   assert.match(html, /ACF/);
@@ -44,13 +43,25 @@ test("server-renders the Artemis signal workspace", async () => {
 });
 
 test("contains finished metadata and no disposable preview surface", async () => {
-  const [page, layout, packageJson] = await Promise.all([
+  const [page, managers, weather, layout, packageJson, signalRoute] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/artemis-managers.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/space-weather.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/signals/route.ts", import.meta.url), "utf8"),
   ]);
 
-  assert.match(page, /583 recognized signals/);
+  assert.match(page, /FullDatabaseManager/);
+  assert.match(page, /FullSignalEditor/);
+  assert.match(page, /FullDocumentsManager/);
+  assert.match(page, /FullPreferences/);
+  assert.match(page, /AudioPlayer/);
+  assert.match(managers, /export function DatabaseManagerModal/);
+  assert.match(managers, /export function DocumentsManagerModal/);
+  assert.match(managers, /export function TagManagerModal/);
+  assert.match(weather, /label: "Current"[\s\S]*label: "Forecasts"[\s\S]*label: "DRAP"[\s\S]*label: "Aurora"[\s\S]*label: "SSA"[\s\S]*label: "Sun Imagers"/);
+  assert.match(signalRoute, /signals\.json/);
   assert.match(layout, /og\.png/);
   assert.match(layout, /Artemis — RF Signal Reference/);
   assert.match(packageJson, /"name": "artemis-rf-reference"/);

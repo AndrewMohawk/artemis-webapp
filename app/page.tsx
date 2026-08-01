@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  AlertTriangle,
   ArrowLeft,
   Bookmark,
   BookmarkCheck,
@@ -19,18 +20,22 @@ import {
   Info,
   Library,
   Orbit,
+  Pencil,
   Plus,
   Radio,
   RefreshCw,
   Search,
+  Settings,
   SlidersHorizontal,
   Sparkles,
   Star,
   Sun,
+  Tags,
   Waves,
   X,
 } from "lucide-react";
 import React, {
+  Suspense,
   useCallback,
   useDeferredValue,
   useEffect,
@@ -40,7 +45,7 @@ import React, {
 } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import signalData from "./data/signals.json";
+import { AudioPlayer } from "./components/audio-player";
 import {
   buildSignalIndex,
   countActiveFilterGroups,
@@ -55,6 +60,35 @@ import {
   type NumericFilterState,
   type SignalRecord,
 } from "./lib/signal-filters";
+import type { SignalDocument } from "./lib/workspace-store";
+import {
+  DATABASE_BUNDLE_BYTE_LIMIT,
+  SIGID_DATABASE_ID,
+  WORKSPACE_PERSISTENCE_BYTE_LIMIT,
+  bookmarkKey,
+  createDefaultWorkspace,
+  exportDatabaseBundle,
+  getDatabaseStats,
+  importDatabaseBundle,
+  loadWorkspace,
+  resolveActiveSignals,
+  saveWorkspace,
+  validateWorkspace,
+  type LocalDatabase,
+  type UserPreferences,
+  type WorkspaceState,
+} from "./lib/workspace-store";
+import type {
+  DatabaseUpdateState,
+  ManagedDatabase,
+  ManagedDocument,
+  ManagedPreferences,
+  ManagedSignal,
+  ManagedTag,
+  NewManagedDocument,
+  ParameterKind,
+} from "./components/artemis-managers";
+import type { SpaceWeatherData as FullSpaceWeatherData } from "./components/space-weather";
 
 type SpaceWeatherData = {
   JSON_INFO?: { utc_date?: string; utc_time?: string };
@@ -94,7 +128,27 @@ type SpaceWeatherData = {
 
 type ViewName = "library" | "saved" | "weather";
 
-const BASE_SIGNALS = signalData as SignalRecord[];
+const FullSpaceWeather = React.lazy(async () => ({
+  default: (await import("./components/space-weather")).SpaceWeather,
+}));
+const FullDatabaseManager = React.lazy(async () => ({
+  default: (await import("./components/artemis-managers")).DatabaseManagerModal,
+}));
+const FullSignalEditor = React.lazy(async () => ({
+  default: (await import("./components/artemis-managers")).SignalEditorModal,
+}));
+const FullTagManager = React.lazy(async () => ({
+  default: (await import("./components/artemis-managers")).TagManagerModal,
+}));
+const FullDocumentsManager = React.lazy(async () => ({
+  default: (await import("./components/artemis-managers")).DocumentsManagerModal,
+}));
+const FullPreferences = React.lazy(async () => ({
+  default: (await import("./components/artemis-managers")).PreferencesModal,
+}));
+const FullAbout = React.lazy(async () => ({
+  default: (await import("./components/artemis-managers")).AboutModal,
+}));
 
 const MEDIA_BASE =
   "https://raw.githubusercontent.com/AresValley/Artemis-DB/main/static";
@@ -124,6 +178,157 @@ function formatRange(items: Datum[], kind: "frequency" | "time" = "frequency") {
 
 function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
+}
+
+function HelpDropdown({
+  updateAvailable,
+  onCheckUpdates,
+  onOpenAbout,
+}: {
+  updateAvailable: boolean;
+  onCheckUpdates: () => void;
+  onOpenAbout: () => void;
+}) {
+  return (
+    <details className={cx("header-help", updateAvailable && "has-update")}>
+      <summary aria-label="Open help menu">
+        <CircleHelp size={19} />
+        <span>Help</span>
+        {updateAvailable ? <i /> : null}
+        <ChevronDown size={14} />
+      </summary>
+      <div className="header-help-popover">
+        <button onClick={onCheckUpdates}>
+          <RefreshCw size={15} /> Check for updates {updateAvailable ? <em>NEW</em> : null}
+        </button>
+        <hr />
+        <a href="https://aresvalley.com/" target="_blank" rel="noreferrer"><ExternalLink size={15} /> Project homepage</a>
+        <a href="https://aresvalley.github.io/Artemis/" target="_blank" rel="noreferrer"><FileText size={15} /> Documentation</a>
+        <a href="https://github.com/AresValley/Artemis/blob/master/CHANGELOG.md" target="_blank" rel="noreferrer"><Info size={15} /> Release notes</a>
+        <a href="https://github.com/AresValley/Artemis/issues" target="_blank" rel="noreferrer"><AlertTriangle size={15} /> Report an issue</a>
+        <hr />
+        <button onClick={onOpenAbout}><Info size={15} /> About Artemis</button>
+      </div>
+    </details>
+  );
+}
+
+const ACCENT_COLORS: Record<string, string> = {
+  Red: "#ef5350", Pink: "#ec407a", Purple: "#ab47bc", DeepPurple: "#7e57c2",
+  Indigo: "#5c6bc0", Blue: "#42a5f5", LightBlue: "#29b6f6", Cyan: "#26c6da",
+  Teal: "#26a69a", Green: "#66bb6a", LightGreen: "#9ccc65", Lime: "#d4e157",
+  Yellow: "#ffee58", Amber: "#ffca28", Orange: "#ffa726", DeepOrange: "#ff7043",
+  Brown: "#8d6e63", Grey: "#78909c", BlueGrey: "#607d8b",
+};
+
+const PARAMETER_KEYS: Record<ParameterKind, keyof Pick<SignalRecord, "frequency" | "bandwidth" | "modulation" | "mode" | "acf" | "location">> = {
+  Frequency: "frequency",
+  Bandwidth: "bandwidth",
+  Modulation: "modulation",
+  Mode: "mode",
+  ACF: "acf",
+  Location: "location",
+};
+
+const PARAMETER_KINDS = Object.keys(PARAMETER_KEYS) as ParameterKind[];
+
+function engineeringValue(value: number) {
+  if (Math.abs(value) >= 1_000_000_000) return { value: value / 1_000_000_000, unit: "GHz" as const };
+  if (Math.abs(value) >= 1_000_000) return { value: value / 1_000_000, unit: "MHz" as const };
+  if (Math.abs(value) >= 1_000) return { value: value / 1_000, unit: "kHz" as const };
+  return { value, unit: "Hz" as const };
+}
+
+function signalToManaged(signal: SignalRecord): ManagedSignal {
+  const parameters = {} as ManagedSignal["parameters"];
+  for (const kind of PARAMETER_KINDS) {
+    const items = signal[PARAMETER_KEYS[kind]];
+    parameters[kind] = items.map((item, index) => {
+      if ((kind === "Frequency" || kind === "Bandwidth") && typeof item.value === "number") {
+        const engineering = engineeringValue(item.value);
+        return { id: `${kind}-${index}`, value: String(engineering.value), description: item.description || "", unit: engineering.unit };
+      }
+      return {
+        id: `${kind}-${index}`,
+        value: String(item.value),
+        description: item.description || "",
+        unit: kind === "ACF" ? "ms" : undefined,
+      };
+    });
+  }
+  return {
+    id: signal.pageid,
+    name: signal.title,
+    description: signal.description || signal["short description"],
+    sinceVersion: signal.added_since,
+    categoryIds: [...signal.category],
+    parameters,
+  };
+}
+
+function summarizeDescription(description: string) {
+  const plain = description
+    .replace(/\[([^\]]+)\]\([^\)]+\)/g, "$1")
+    .replace(/[*_`>#-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return plain.slice(0, 280) || "Locally stored signal reference.";
+}
+
+function managedToSignal(managed: ManagedSignal, existing?: SignalRecord): SignalRecord {
+  const unitScale = { Hz: 1, kHz: 1_000, MHz: 1_000_000, GHz: 1_000_000_000, ms: 1 } as const;
+  const convert = (kind: ParameterKind): Datum[] => managed.parameters[kind]
+    .filter((parameter) => parameter.value.trim() !== "")
+    .map((parameter) => {
+      if (kind === "Frequency" || kind === "Bandwidth" || kind === "ACF") {
+        const number = Number(parameter.value);
+        return {
+          value: Number.isFinite(number) ? number * unitScale[parameter.unit || (kind === "ACF" ? "ms" : "Hz")] : 0,
+          description: parameter.description,
+        };
+      }
+      return { value: parameter.value.trim(), description: parameter.description };
+    });
+  return {
+    pageid: managed.id,
+    title: managed.name.trim(),
+    added_since: managed.sinceVersion ?? existing?.added_since ?? 1,
+    spectrum: existing?.spectrum || null,
+    audio: existing?.audio || null,
+    category: [...managed.categoryIds],
+    frequency: convert("Frequency"),
+    bandwidth: convert("Bandwidth"),
+    acf: convert("ACF"),
+    modulation: convert("Modulation"),
+    mode: convert("Mode"),
+    location: convert("Location"),
+    "short description": summarizeDescription(managed.description),
+    description: managed.description,
+    custom: existing?.custom ?? true,
+  };
+}
+
+function documentToManaged(document: SignalDocument): ManagedDocument {
+  const extension = document.fileName.includes(".") ? document.fileName.split(".").pop() || "" : "";
+  return {
+    id: document.id,
+    name: document.name,
+    description: document.description,
+    type: document.type,
+    fileName: document.fileName,
+    extension,
+    dataUrl: document.dataUrl,
+    preview: document.preview,
+  };
+}
+
+function managedPreferences(preferences: UserPreferences): ManagedPreferences {
+  return {
+    theme: preferences.theme,
+    accent: (ACCENT_COLORS[preferences.accent] ? preferences.accent : "Green") as ManagedPreferences["accent"],
+    scale: preferences.scale,
+    autoloadLatest: preferences.autoloadLatest,
+  };
 }
 
 function NavButton({
@@ -156,10 +361,12 @@ function ParameterRow({
   label,
   values,
   formatter,
+  onEdit,
 }: {
   label: string;
   values: Datum[];
   formatter?: (value: number) => string;
+  onEdit?: () => void;
 }) {
   return (
     <div className="parameter-row">
@@ -167,15 +374,17 @@ function ParameterRow({
       <dd>
         {values.length ? (
           values.map((item, index) => (
-            <span
+            <button
+              type="button"
               className="value-chip"
               title={item.description || undefined}
               key={`${item.value}-${index}`}
+              onClick={onEdit}
             >
               {formatter && typeof item.value === "number"
                 ? formatter(item.value)
                 : String(item.value)}
-            </span>
+            </button>
           ))
         ) : (
           <span className="empty-value">Not specified</span>
@@ -312,12 +521,18 @@ const SignalDetail = React.memo(function SignalDetail({
   onToggleSaved,
   onBack,
   onOpenDocuments,
+  onEdit,
+  onRemoveCategory,
+  onAddCategory,
 }: {
   signal: SignalRecord;
   saved: boolean;
   onToggleSaved: () => void;
   onBack: () => void;
   onOpenDocuments: () => void;
+  onEdit: () => void;
+  onRemoveCategory: (category: string) => void;
+  onAddCategory: () => void;
 }) {
   return (
     <article className="signal-detail" aria-labelledby="signal-title">
@@ -332,6 +547,10 @@ const SignalDetail = React.memo(function SignalDetail({
           {signal.custom ? "LOCAL REFERENCE" : `SIGID REFERENCE · #${signal.pageid}`}
         </span>
         <div className="detail-actions">
+          <button className="icon-text-button" onClick={onEdit} aria-label="Edit signal and parameters">
+            <Pencil size={16} />
+            <span>Edit</span>
+          </button>
           <button
             className={cx("icon-text-button", saved && "is-saved")}
             onClick={onToggleSaved}
@@ -359,10 +578,19 @@ const SignalDetail = React.memo(function SignalDetail({
 
       <div className="tag-row" aria-label="Categories">
         {signal.category.map((category) => (
-          <span className="category-tag" key={category}>
+          <button
+            type="button"
+            className="category-tag"
+            key={category}
+            title="Remove tag from this signal"
+            onClick={() => onRemoveCategory(category)}
+          >
             {category}
-          </span>
+          </button>
         ))}
+        <button type="button" className="category-tag add-category-tag" onClick={onAddCategory}>
+          <Plus size={13} /> Add tag
+        </button>
         <span className="version-tag" title="First database version containing this signal">
           v{signal.added_since}
         </span>
@@ -390,12 +618,12 @@ const SignalDetail = React.memo(function SignalDetail({
           <SlidersHorizontal size={19} />
         </div>
         <dl className="parameter-table">
-          <ParameterRow label="Frequency" values={signal.frequency} formatter={(v) => formatEngineering(v)} />
-          <ParameterRow label="Bandwidth" values={signal.bandwidth} formatter={(v) => formatEngineering(v)} />
-          <ParameterRow label="Modulation" values={signal.modulation} />
-          <ParameterRow label="Mode" values={signal.mode} />
-          <ParameterRow label="ACF" values={signal.acf} formatter={(v) => `${trimNumber(v)} ms`} />
-          <ParameterRow label="Location" values={signal.location} />
+          <ParameterRow label="Frequency" values={signal.frequency} formatter={(v) => formatEngineering(v)} onEdit={onEdit} />
+          <ParameterRow label="Bandwidth" values={signal.bandwidth} formatter={(v) => formatEngineering(v)} onEdit={onEdit} />
+          <ParameterRow label="Modulation" values={signal.modulation} onEdit={onEdit} />
+          <ParameterRow label="Mode" values={signal.mode} onEdit={onEdit} />
+          <ParameterRow label="ACF" values={signal.acf} formatter={(v) => `${trimNumber(v)} ms`} onEdit={onEdit} />
+          <ParameterRow label="Location" values={signal.location} onEdit={onEdit} />
         </dl>
       </section>
 
@@ -428,24 +656,34 @@ const SignalDetail = React.memo(function SignalDetail({
 
 const MediaPanel = React.memo(function MediaPanel({
   signal,
+  documents,
   onOpenDocuments,
+  preferences,
+  onAudioSettingsChange,
 }: {
   signal: SignalRecord;
+  documents: SignalDocument[];
   onOpenDocuments: () => void;
+  preferences: Pick<UserPreferences, "audioVolume" | "audioLoop" | "audioOutputDeviceId">;
+  onAudioSettingsChange: (settings: { volume?: number; loop?: boolean; outputDeviceId?: string }) => void;
 }) {
-  const rawImage = signal.spectrum
+  const mainImage = documents.find((document) => document.type === "Image" && document.preview && document.dataUrl);
+  const mainAudio = documents.find((document) => document.type === "Audio" && document.preview && document.dataUrl);
+  const rawImage = signal.spectrum?.url
     ? `${MEDIA_BASE}/${signal.pageid}/media/1.png`
     : "";
-  const rawAudio = signal.audio
+  const rawAudio = signal.audio?.url
     ? `${MEDIA_BASE}/${signal.pageid}/media/1.ogg`
     : "";
   const [failedImageSources, setFailedImageSources] = useState<Set<string>>(() => new Set());
   const fallbackImage = signal.spectrum?.url || "";
-  const imageSource = rawImage && !failedImageSources.has(rawImage)
-    ? rawImage
-    : fallbackImage && !failedImageSources.has(fallbackImage)
-      ? fallbackImage
-      : "";
+  const localImage = mainImage?.dataUrl || "";
+  const imageSource = localImage
+    || (rawImage && !failedImageSources.has(rawImage)
+      ? rawImage
+      : fallbackImage && !failedImageSources.has(fallbackImage)
+        ? fallbackImage
+        : "");
 
   return (
     <aside className="media-panel" aria-label="Signal media">
@@ -487,13 +725,14 @@ const MediaPanel = React.memo(function MediaPanel({
           </div>
           <Headphones size={18} />
         </div>
-        {rawAudio ? (
-          <audio key={rawAudio} controls preload="none" src={rawAudio}>
-            Your browser does not support audio playback.
-          </audio>
-        ) : (
-          <div className="audio-empty">No audio sample available</div>
-        )}
+        <AudioPlayer
+          title={mainAudio?.name || signal.audio?.filename || `${signal.title} sample`}
+          sources={[mainAudio?.dataUrl || "", rawAudio, signal.audio?.url || ""]}
+          initialVolume={preferences.audioVolume}
+          initialLoop={preferences.audioLoop}
+          initialOutputDeviceId={preferences.audioOutputDeviceId}
+          onSettingsChange={onAudioSettingsChange}
+        />
       </section>
 
       <button className="documents-card" onClick={onOpenDocuments}>
@@ -1130,17 +1369,39 @@ export default function Home() {
   const deferredQuery = useDeferredValue(query);
   const [filters, setFilters] = useState<FiltersState>(() => createDefaultFilters());
   const [selectedId, setSelectedId] = useState("5803");
-  const [bookmarks, setBookmarks] = useState<Set<string>>(new Set());
-  const [customSignals, setCustomSignals] = useState<SignalRecord[]>([]);
+  const [catalogSignals, setCatalogSignals] = useState<SignalRecord[]>([]);
+  const [catalogLoading, setCatalogLoading] = useState(true);
+  const [catalogError, setCatalogError] = useState("");
+  const [workspace, setWorkspace] = useState<WorkspaceState>(() => createDefaultWorkspace());
+  const [workspaceReady, setWorkspaceReady] = useState(false);
   const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
   const [documentsOpen, setDocumentsOpen] = useState(false);
   const [databaseOpen, setDatabaseOpen] = useState(false);
   const [newSignalOpen, setNewSignalOpen] = useState(false);
-  const [weather, setWeather] = useState<SpaceWeatherData | null>(null);
+  const [editorSignalId, setEditorSignalId] = useState<string | null>(null);
+  const [tagManagerOpen, setTagManagerOpen] = useState(false);
+  const [preferencesOpen, setPreferencesOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
+  const [weather, setWeather] = useState<FullSpaceWeatherData | null>(null);
   const [weatherLoading, setWeatherLoading] = useState(false);
+  const [weatherError, setWeatherError] = useState("");
+  const [updateState, setUpdateState] = useState<DatabaseUpdateState>("idle");
+  const [updateMessage, setUpdateMessage] = useState("");
+  const [operationStatus, setOperationStatus] = useState("Ready");
+  const [filterPaneWidth, setFilterPaneWidth] = useState(270);
+  const [signalPaneWidth, setSignalPaneWidth] = useState(315);
   const searchRef = useRef<HTMLInputElement>(null);
 
-  const allSignals = useMemo(() => [...customSignals, ...BASE_SIGNALS], [customSignals]);
+  const bookmarks = useMemo(() => {
+    const prefix = `${workspace.activeDatabaseId}::`;
+    return new Set(workspace.bookmarks
+      .filter((key) => key.startsWith(prefix))
+      .map((key) => key.slice(prefix.length)));
+  }, [workspace.activeDatabaseId, workspace.bookmarks]);
+  const allSignals = useMemo(
+    () => resolveActiveSignals(workspace, catalogSignals),
+    [catalogSignals, workspace],
+  );
   const signalIndex = useMemo(() => buildSignalIndex(allSignals), [allSignals]);
   const filterMetadata = useMemo(() => {
     const categories = new Map<string, number>();
@@ -1186,28 +1447,76 @@ export default function Home() {
     filteredSignals.find((signal) => signal.pageid === selectedId) || filteredSignals[0] || null;
 
   const activeFilterCount = countActiveFilterGroups(filters);
+  const activeLocalDatabase = workspace.databases.find((database) => database.id === workspace.activeDatabaseId) || null;
+  const activeDatabaseName = activeLocalDatabase?.name || "SigID Database";
+  const activeDatabaseVersion = activeLocalDatabase?.version || 74;
+  const activeDocuments = useMemo(() => workspace.activeDatabaseId === SIGID_DATABASE_ID
+    ? workspace.sigidDocuments
+    : activeLocalDatabase?.documents || [], [activeLocalDatabase?.documents, workspace.activeDatabaseId, workspace.sigidDocuments]);
+  const selectedDocuments = useMemo(() => selected
+    ? activeDocuments.filter((document) => document.signalId === selected.pageid)
+    : [], [activeDocuments, selected]);
+  const activeTags = useMemo(() => {
+    const configured = workspace.activeDatabaseId === SIGID_DATABASE_ID
+      ? workspace.sigidTags
+      : activeLocalDatabase?.tags || [];
+    return Array.from(new Set([...configured, ...allSignals.flatMap((signal) => signal.category)])).sort();
+  }, [activeLocalDatabase?.tags, allSignals, workspace.activeDatabaseId, workspace.sigidTags]);
+  const managedTags = useMemo<ManagedTag[]>(() => activeTags.map((tag) => ({
+    id: tag,
+    name: tag,
+    signalCount: allSignals.filter((signal) => signal.category.includes(tag)).length,
+  })), [activeTags, allSignals]);
 
   useEffect(() => {
-    const frame = requestAnimationFrame(() => {
-      try {
-        const saved = JSON.parse(localStorage.getItem("artemis-saved") || "[]") as string[];
-        const local = JSON.parse(localStorage.getItem("artemis-custom-signals") || "[]") as SignalRecord[];
-        setBookmarks(new Set(saved));
-        setCustomSignals(Array.isArray(local) ? local : []);
-      } catch {
-        // A corrupted local preference should never block the reference library.
+    const controller = new AbortController();
+    async function initialize() {
+      const workspacePromise = loadWorkspace();
+      const catalogPromise = fetch("/api/signals", { signal: controller.signal })
+        .then(async (response) => {
+          if (!response.ok) throw new Error("Signal catalog unavailable");
+          return response.json() as Promise<{ signals?: SignalRecord[] }>;
+        });
+      const [workspaceResult, catalogResult] = await Promise.allSettled([workspacePromise, catalogPromise]);
+      if (controller.signal.aborted) return;
+      if (workspaceResult.status === "fulfilled") {
+        setWorkspace(workspaceResult.value.preferences.autoloadLatest
+          ? { ...workspaceResult.value, activeDatabaseId: SIGID_DATABASE_ID }
+          : workspaceResult.value);
       }
-    });
-    return () => cancelAnimationFrame(frame);
+      setWorkspaceReady(true);
+      if (catalogResult.status === "fulfilled" && Array.isArray(catalogResult.value.signals)) {
+        setCatalogSignals(catalogResult.value.signals);
+        setCatalogError("");
+      } else {
+        setCatalogError("The signal catalog could not be loaded. Retry when the connection returns.");
+      }
+      setCatalogLoading(false);
+    }
+    void initialize();
+    return () => controller.abort();
   }, []);
 
   useEffect(() => {
-    localStorage.setItem("artemis-saved", JSON.stringify(Array.from(bookmarks)));
-  }, [bookmarks]);
+    if (!workspaceReady) return;
+    const timeout = window.setTimeout(() => {
+      void saveWorkspace(workspace).catch((error) => {
+        setOperationStatus(error instanceof Error ? error.message : "Workspace save failed");
+      });
+    }, 120);
+    return () => window.clearTimeout(timeout);
+  }, [workspace, workspaceReady]);
 
   useEffect(() => {
-    localStorage.setItem("artemis-custom-signals", JSON.stringify(customSignals));
-  }, [customSignals]);
+    const preferences = workspace.preferences;
+    const root = document.documentElement;
+    root.dataset.theme = preferences.theme;
+    root.style.setProperty("--ui-scale", String(preferences.scale));
+    const accent = ACCENT_COLORS[preferences.accent] || ACCENT_COLORS.Green;
+    root.style.setProperty("--accent", accent);
+    root.style.setProperty("--accent-strong", accent);
+    root.style.setProperty("--accent-soft", `${accent}24`);
+  }, [workspace.preferences]);
 
   useEffect(() => {
     function handleKeydown(event: KeyboardEvent) {
@@ -1221,6 +1530,10 @@ export default function Home() {
         setDocumentsOpen(false);
         setDatabaseOpen(false);
         setNewSignalOpen(false);
+        setEditorSignalId(null);
+        setTagManagerOpen(false);
+        setPreferencesOpen(false);
+        setAboutOpen(false);
       }
       if (!inInteractiveControl && view !== "weather" && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
         event.preventDefault();
@@ -1237,12 +1550,13 @@ export default function Home() {
 
   async function loadWeather() {
     setWeatherLoading(true);
+    setWeatherError("");
     try {
       const response = await fetch("/api/space-weather", { cache: "no-store" });
       if (!response.ok) throw new Error("Weather report unavailable");
       setWeather(await response.json());
     } catch {
-      setWeather(null);
+      setWeatherError("Live Poseidon data is temporarily unavailable. The last successful report remains visible.");
     } finally {
       setWeatherLoading(false);
     }
@@ -1261,56 +1575,473 @@ export default function Home() {
   }, []);
 
   const toggleBookmark = useCallback(() => {
-    if (!selected) return;
-    setBookmarks((current) => {
-      const next = new Set(current);
-      if (next.has(selected.pageid)) next.delete(selected.pageid);
-      else next.add(selected.pageid);
-      return next;
+    if (!selected || !workspaceReady) return;
+    setWorkspace((current) => {
+      const next = new Set(current.bookmarks);
+      const key = bookmarkKey(current.activeDatabaseId, selected.pageid);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return { ...current, bookmarks: Array.from(next) };
     });
-  }, [selected]);
+  }, [selected, workspaceReady]);
 
   const closeMobileDetail = useCallback(() => setMobileDetailOpen(false), []);
-  const openDocuments = useCallback(() => setDocumentsOpen(true), []);
+  const openDocuments = useCallback(() => {
+    if (workspaceReady) setDocumentsOpen(true);
+  }, [workspaceReady]);
 
-  function addCustomSignal(signal: SignalRecord) {
-    setCustomSignals((current) => [signal, ...current]);
-    setSelectedId(signal.pageid);
-    setNewSignalOpen(false);
-    setDatabaseOpen(false);
-    setView("library");
-    setMobileDetailOpen(true);
+  const updateAudioSettings = useCallback((settings: { volume?: number; loop?: boolean; outputDeviceId?: string }) => {
+    if (!workspaceReady) return;
+    setWorkspace((current) => ({
+      ...current,
+      preferences: {
+        ...current.preferences,
+        ...(settings.volume === undefined ? {} : { audioVolume: settings.volume }),
+        ...(settings.loop === undefined ? {} : { audioLoop: settings.loop }),
+        ...(settings.outputDeviceId === undefined ? {} : { audioOutputDeviceId: settings.outputDeviceId }),
+      },
+    }));
+  }, [workspaceReady]);
+
+  function requireWorkspaceReady() {
+    if (!workspaceReady) throw new Error("Your local Artemis workspace is still loading. Try again in a moment.");
   }
 
-  function exportCustomSignals() {
-    const blob = new Blob([JSON.stringify(customSignals, null, 2)], { type: "application/json" });
+  function saveManagedSignal(managed: ManagedSignal) {
+    requireWorkspaceReady();
+    const existing = allSignals.find((signal) => signal.pageid === managed.id);
+    if (!existing && allSignals.length >= 5_000) throw new Error("This database has reached the 5,000 signal limit.");
+    if (Object.values(managed.parameters).some((parameters) => parameters.length > 2_000)) {
+      throw new Error("A signal parameter cannot contain more than 2,000 values.");
+    }
+    const signal = managedToSignal(managed, existing);
+    setWorkspace((current) => {
+      if (current.activeDatabaseId === SIGID_DATABASE_ID) {
+        const isBaseSignal = catalogSignals.some((candidate) => candidate.pageid === signal.pageid);
+        return {
+          ...current,
+          deletedSigidIds: current.deletedSigidIds.filter((id) => id !== signal.pageid),
+          sigidOverrides: isBaseSignal
+            ? { ...current.sigidOverrides, [signal.pageid]: signal }
+            : current.sigidOverrides,
+          sigidAdditions: isBaseSignal
+            ? current.sigidAdditions.filter((candidate) => candidate.pageid !== signal.pageid)
+            : [signal, ...current.sigidAdditions.filter((candidate) => candidate.pageid !== signal.pageid)],
+        };
+      }
+      return {
+        ...current,
+        databases: current.databases.map((database) => database.id === current.activeDatabaseId
+          ? {
+              ...database,
+              updatedAt: new Date().toISOString(),
+              tags: Array.from(new Set([...database.tags, ...signal.category])),
+              signals: [signal, ...database.signals.filter((candidate) => candidate.pageid !== signal.pageid)],
+            }
+          : database),
+      };
+    });
+    setSelectedId(signal.pageid);
+    setNewSignalOpen(false);
+    setEditorSignalId(null);
+    setView("library");
+    setMobileDetailOpen(true);
+    setOperationStatus(`${signal.title} saved`);
+  }
+
+  function deleteManagedSignal(signalId: string) {
+    requireWorkspaceReady();
+    const signalName = allSignals.find((signal) => signal.pageid === signalId)?.title || "Signal";
+    setWorkspace((current) => {
+      const deletedBookmark = bookmarkKey(current.activeDatabaseId, signalId);
+      const bookmarks = current.bookmarks.filter((id) => id !== deletedBookmark);
+      if (current.activeDatabaseId === SIGID_DATABASE_ID) {
+        const overrides = { ...current.sigidOverrides };
+        delete overrides[signalId];
+        const isBaseSignal = catalogSignals.some((candidate) => candidate.pageid === signalId);
+        return {
+          ...current,
+          bookmarks,
+          sigidOverrides: overrides,
+          sigidAdditions: current.sigidAdditions.filter((signal) => signal.pageid !== signalId),
+          deletedSigidIds: isBaseSignal
+            ? Array.from(new Set([...current.deletedSigidIds, signalId]))
+            : current.deletedSigidIds,
+          sigidDocuments: current.sigidDocuments.filter((document) => document.signalId !== signalId),
+        };
+      }
+      return {
+        ...current,
+        bookmarks,
+        databases: current.databases.map((database) => database.id === current.activeDatabaseId
+          ? {
+              ...database,
+              updatedAt: new Date().toISOString(),
+              signals: database.signals.filter((signal) => signal.pageid !== signalId),
+              documents: database.documents.filter((document) => document.signalId !== signalId),
+            }
+          : database),
+      };
+    });
+    setNewSignalOpen(false);
+    setEditorSignalId(null);
+    setMobileDetailOpen(false);
+    setOperationStatus(`${signalName} deleted`);
+  }
+
+  function downloadText(contents: string, name: string) {
+    const blob = new Blob([contents], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = "artemis-field-notes.json";
+    anchor.download = name;
     anchor.click();
     URL.revokeObjectURL(url);
   }
 
-  async function importCustomSignals(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    try {
-      const parsed = JSON.parse(await file.text());
-      const incoming = (Array.isArray(parsed) ? parsed : [parsed]).filter(
-        (item): item is SignalRecord => Boolean(item && typeof item.title === "string"),
-      );
-      const normalized = incoming.map((item, index) => ({
-        ...item,
-        pageid: item.pageid?.startsWith("local-") ? item.pageid : `local-import-${Date.now()}-${index}`,
-        custom: true,
-      }));
-      setCustomSignals((current) => [...normalized, ...current]);
-    } catch {
-      window.alert("That file is not a valid Artemis JSON library.");
-    } finally {
-      event.target.value = "";
+  function createDatabase(name: string) {
+    requireWorkspaceReady();
+    if (workspace.databases.length >= 50) throw new Error("This workspace has reached the 50 database limit.");
+    const now = new Date().toISOString();
+    const database: LocalDatabase = {
+      id: `database-${crypto.randomUUID?.() || Date.now()}`,
+      name,
+      version: 1,
+      createdAt: now,
+      updatedAt: now,
+      signals: [],
+      tags: [],
+      documents: [],
+    };
+    setWorkspace((current) => ({ ...current, activeDatabaseId: database.id, databases: [...current.databases, database] }));
+    setOperationStatus(`${name} created and loaded`);
+  }
+
+  function loadDatabase(databaseId: string) {
+    requireWorkspaceReady();
+    setWorkspace((current) => ({ ...current, activeDatabaseId: databaseId }));
+    setFilters(createDefaultFilters());
+    setSelectedId("");
+    setMobileDetailOpen(false);
+    setOperationStatus(`${databaseId === SIGID_DATABASE_ID ? "SigID Database" : workspace.databases.find((database) => database.id === databaseId)?.name || "Database"} loaded`);
+  }
+
+  function renameDatabase(databaseId: string, name: string) {
+    requireWorkspaceReady();
+    if (databaseId === SIGID_DATABASE_ID) throw new Error("The bundled SigID database name is fixed.");
+    setWorkspace((current) => ({
+      ...current,
+      databases: current.databases.map((database) => database.id === databaseId ? { ...database, name, updatedAt: new Date().toISOString() } : database),
+    }));
+    setOperationStatus(`Database renamed to ${name}`);
+  }
+
+  function deleteDatabase(databaseId: string) {
+    requireWorkspaceReady();
+    if (databaseId === SIGID_DATABASE_ID) throw new Error("The bundled SigID database cannot be deleted.");
+    setWorkspace((current) => ({
+      ...current,
+      activeDatabaseId: current.activeDatabaseId === databaseId ? SIGID_DATABASE_ID : current.activeDatabaseId,
+      databases: current.databases.filter((database) => database.id !== databaseId),
+      bookmarks: current.bookmarks.filter((key) => !key.startsWith(`${databaseId}::`)),
+    }));
+    setOperationStatus("Database deleted");
+  }
+
+  async function importDatabase(file: File) {
+    requireWorkspaceReady();
+    if (workspace.databases.length >= 50) throw new Error("Delete a local database before importing another one.");
+    if (!file.name.toLocaleLowerCase().endsWith(".json")) {
+      throw new Error("This web edition imports validated Artemis JSON archives. Desktop SQLite .tar archives must first be exported to JSON.");
     }
+    if (file.size > DATABASE_BUNDLE_BYTE_LIMIT) {
+      throw new Error("Database archives are limited to 65 MiB.");
+    }
+    const database = importDatabaseBundle(await file.text());
+    const imported = { ...database, id: `database-${crypto.randomUUID?.() || Date.now()}` };
+    setWorkspace(validateWorkspace({ ...workspace, activeDatabaseId: imported.id, databases: [...workspace.databases, imported] }));
+    setOperationStatus(`${imported.name} imported`);
+  }
+
+  function exportDatabase(databaseId: string) {
+    requireWorkspaceReady();
+    if (databaseId === SIGID_DATABASE_ID) {
+      const now = new Date().toISOString();
+      const database: LocalDatabase = {
+        id: "sigid-export",
+        name: "SigID Database",
+        version: 74,
+        createdAt: now,
+        updatedAt: now,
+        signals: allSignals,
+        tags: activeTags,
+        documents: workspace.sigidDocuments,
+      };
+      downloadText(exportDatabaseBundle(database), "sigid-v74.artemis.json");
+    } else {
+      const database = workspace.databases.find((candidate) => candidate.id === databaseId);
+      if (!database) throw new Error("Database not found.");
+      downloadText(exportDatabaseBundle(database), `${database.name.replace(/[^a-z0-9]+/gi, "-").toLocaleLowerCase()}.artemis.json`);
+    }
+    setOperationStatus("Database archive exported");
+  }
+
+  const checkUpdates = useCallback(async () => {
+    setUpdateState("checking");
+    setUpdateMessage("Checking AresValley releases…");
+    try {
+      const response = await fetch("/api/update-info", { cache: "no-store" });
+      if (!response.ok) throw new Error("Update service unavailable");
+      const info = await response.json() as { database?: { version?: string }; upstreamApplication?: { version?: string } };
+      const latestDatabase = Number(String(info.database?.version || "").replace(/\D/g, ""));
+      const available = Number.isFinite(latestDatabase) && latestDatabase > 74;
+      setUpdateState(available ? "available" : "current");
+      setUpdateMessage(available
+        ? `SigID ${info.database?.version} is available. The web catalog will update after its verified deployment.`
+        : `Database v74 is current. Upstream Artemis ${info.upstreamApplication?.version || "release information loaded"}.`);
+    } catch {
+      setUpdateState("error");
+      setUpdateMessage("Unable to check releases right now.");
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!workspaceReady) return;
+    const timeout = window.setTimeout(() => void checkUpdates(), 0);
+    return () => window.clearTimeout(timeout);
+  }, [checkUpdates, workspaceReady]);
+
+  function updateActiveDocuments(transform: (documents: SignalDocument[]) => SignalDocument[]) {
+    const candidate = workspace.activeDatabaseId === SIGID_DATABASE_ID
+      ? { ...workspace, sigidDocuments: transform(workspace.sigidDocuments) }
+      : {
+          ...workspace,
+          databases: workspace.databases.map((database) => database.id === workspace.activeDatabaseId
+            ? { ...database, documents: transform(database.documents), updatedAt: new Date().toISOString() }
+            : database),
+        };
+    setWorkspace(validateWorkspace(candidate));
+  }
+
+  function addDocument(document: NewManagedDocument) {
+    requireWorkspaceReady();
+    if (!selected) throw new Error("Select a signal before adding a document.");
+    if (activeDocuments.length >= 5_000) throw new Error("This database has reached the 5,000 document limit.");
+    const mime = document.dataUrl?.match(/^data:([^;,]+)/)?.[1] || "application/octet-stream";
+    const saved: SignalDocument = {
+      id: `document-${crypto.randomUUID?.() || Date.now()}`,
+      signalId: selected.pageid,
+      fileName: document.fileName,
+      name: document.name,
+      description: document.description,
+      type: document.type,
+      preview: document.preview,
+      mime,
+      dataUrl: document.dataUrl,
+    };
+    if (JSON.stringify(workspace).length + (document.dataUrl?.length || 0) > WORKSPACE_PERSISTENCE_BYTE_LIMIT) {
+      throw new Error("This attachment would exceed the 64 MiB workspace limit. Export or remove stored files first.");
+    }
+    updateActiveDocuments((documents) => [...documents, saved]);
+    setOperationStatus(`${document.name} attached`);
+  }
+
+  function updateDocument(document: ManagedDocument) {
+    requireWorkspaceReady();
+    if (document.id.startsWith("builtin-")) throw new Error("Bundled reference media metadata is read-only.");
+    updateActiveDocuments((documents) => {
+      const existing = documents.find((current) => current.id === document.id);
+      return documents.map((current) => {
+        if (current.id === document.id) {
+          return {
+            ...current,
+            name: document.name,
+            description: document.description,
+            type: document.type,
+            preview: document.preview,
+          };
+        }
+        if (document.preview && existing && current.signalId === existing.signalId && current.type === document.type) {
+          return { ...current, preview: false };
+        }
+        return current;
+      });
+    });
+    setOperationStatus(`${document.name} updated`);
+  }
+
+  function deleteDocument(documentId: string) {
+    requireWorkspaceReady();
+    if (documentId.startsWith("builtin-")) throw new Error("Bundled reference media cannot be deleted.");
+    updateActiveDocuments((documents) => documents.filter((document) => document.id !== documentId));
+    setOperationStatus("Document deleted");
+  }
+
+  function setMainDocument(documentId: string, type: "Image" | "Audio") {
+    requireWorkspaceReady();
+    updateActiveDocuments((documents) => documents.map((document) => document.signalId === selected?.pageid && document.type === type
+      ? { ...document, preview: documentId.startsWith("builtin-") ? false : document.id === documentId }
+      : document));
+    setOperationStatus(`Main ${type.toLocaleLowerCase()} updated`);
+  }
+
+  function updateConfiguredTags(transform: (tags: string[]) => string[]) {
+    setWorkspace((current) => {
+      if (current.activeDatabaseId === SIGID_DATABASE_ID) return { ...current, sigidTags: transform(current.sigidTags) };
+      return {
+        ...current,
+        databases: current.databases.map((database) => database.id === current.activeDatabaseId
+          ? { ...database, tags: transform(database.tags), updatedAt: new Date().toISOString() }
+          : database),
+      };
+    });
+  }
+
+  function addTag(name: string) {
+    requireWorkspaceReady();
+    if (activeTags.includes(name)) throw new Error("That tag already exists.");
+    if (activeTags.length >= 1_000) throw new Error("This database has reached the 1,000 tag limit.");
+    updateConfiguredTags((tags) => [...tags, name]);
+    setOperationStatus(`${name} tag added`);
+  }
+
+  function transformActiveSignalTags(transform: (categories: string[]) => string[]) {
+    setWorkspace((current) => {
+      if (current.activeDatabaseId !== SIGID_DATABASE_ID) {
+        return {
+          ...current,
+          databases: current.databases.map((database) => database.id === current.activeDatabaseId
+            ? {
+                ...database,
+                tags: transform(database.tags),
+                signals: database.signals.map((signal) => ({ ...signal, category: transform(signal.category) })),
+                updatedAt: new Date().toISOString(),
+              }
+            : database),
+        };
+      }
+      const overrides = { ...current.sigidOverrides };
+      for (const signal of allSignals) {
+        const categories = transform(signal.category);
+        if (categories.join("\0") !== signal.category.join("\0") && catalogSignals.some((base) => base.pageid === signal.pageid)) {
+          overrides[signal.pageid] = { ...signal, category: categories };
+        }
+      }
+      return {
+        ...current,
+        sigidTags: transform(current.sigidTags),
+        sigidOverrides: overrides,
+        sigidAdditions: current.sigidAdditions.map((signal) => ({ ...signal, category: transform(signal.category) })),
+      };
+    });
+  }
+
+  function renameTag(tagId: string, name: string) {
+    requireWorkspaceReady();
+    if (activeTags.includes(name) && name !== tagId) throw new Error("That tag already exists.");
+    transformActiveSignalTags((categories) => Array.from(new Set(categories.map((category) => category === tagId ? name : category))));
+    setOperationStatus(`${tagId} renamed to ${name}`);
+  }
+
+  function deleteTag(tagId: string) {
+    requireWorkspaceReady();
+    transformActiveSignalTags((categories) => categories.filter((category) => category !== tagId));
+    setOperationStatus(`${tagId} deleted`);
+  }
+
+  function savePreferences(preferences: ManagedPreferences) {
+    requireWorkspaceReady();
+    setWorkspace((current) => ({
+      ...current,
+      preferences: { ...current.preferences, ...preferences },
+    }));
+    setPreferencesOpen(false);
+    setOperationStatus("Preferences saved");
+  }
+
+  const managedDatabases = useMemo<ManagedDatabase[]>(() => {
+    const builtInDocuments = catalogSignals.reduce((count, signal) => count + Number(Boolean(signal.spectrum?.url)) + Number(Boolean(signal.audio?.url)), 0);
+    return [
+      {
+        id: SIGID_DATABASE_ID,
+        name: "SigID Database",
+        version: 74,
+        createdAt: "Community catalog",
+        editable: false,
+        isSigid: true,
+        signalCount: resolveActiveSignals(workspace, catalogSignals).length,
+        documentCount: builtInDocuments + workspace.sigidDocuments.length,
+        imageCount: catalogSignals.filter((signal) => Boolean(signal.spectrum?.url)).length + workspace.sigidDocuments.filter((document) => document.type === "Image").length,
+        audioCount: catalogSignals.filter((signal) => Boolean(signal.audio?.url)).length + workspace.sigidDocuments.filter((document) => document.type === "Audio").length,
+      },
+      ...workspace.databases.map((database) => {
+        const stats = getDatabaseStats(database);
+        return {
+          id: database.id,
+          name: database.name,
+          version: database.version,
+          createdAt: new Date(database.createdAt).toLocaleDateString(),
+          editable: true,
+          signalCount: stats.signals,
+          documentCount: stats.documents,
+          imageCount: stats.images,
+          audioCount: stats.audio,
+        };
+      }),
+    ];
+  }, [catalogSignals, workspace]);
+
+  const managedDocuments = useMemo<ManagedDocument[]>(() => {
+    if (!selected) return [];
+    const local = selectedDocuments.map(documentToManaged);
+    const hasLocalImage = selectedDocuments.some((document) => document.type === "Image" && document.preview);
+    const hasLocalAudio = selectedDocuments.some((document) => document.type === "Audio" && document.preview);
+    const builtIn: ManagedDocument[] = [];
+    if (selected.spectrum?.url) builtIn.push({
+      id: `builtin-image-${selected.pageid}`,
+      name: selected.spectrum.filename || "Spectrum sample",
+      description: "Bundled SigID spectrum/waterfall preview.",
+      type: "Image",
+      fileName: selected.spectrum.filename || "spectrum.png",
+      extension: selected.spectrum.filename?.split(".").pop() || "png",
+      url: selected.spectrum.url,
+      preview: !hasLocalImage,
+    });
+    if (selected.audio?.url) builtIn.push({
+      id: `builtin-audio-${selected.pageid}`,
+      name: selected.audio.filename || "Audio sample",
+      description: "Bundled SigID audio preview.",
+      type: "Audio",
+      fileName: selected.audio.filename || "sample.ogg",
+      extension: selected.audio.filename?.split(".").pop() || "ogg",
+      url: selected.audio.url,
+      preview: !hasLocalAudio,
+    });
+    return [...local, ...builtIn];
+  }, [selected, selectedDocuments]);
+  const managedEditorSignal = editorSignalId
+    ? allSignals.find((signal) => signal.pageid === editorSignalId) || null
+    : null;
+
+  function removeSelectedCategory(category: string) {
+    if (!selected || !workspaceReady) return;
+    saveManagedSignal(signalToManaged({ ...selected, category: selected.category.filter((value) => value !== category) }));
+  }
+
+  function startPaneResize(kind: "filter" | "signals", event: React.PointerEvent<HTMLButtonElement>) {
+    const startX = event.clientX;
+    const startWidth = kind === "filter" ? filterPaneWidth : signalPaneWidth;
+    function move(moveEvent: PointerEvent) {
+      const next = Math.max(kind === "filter" ? 235 : 270, Math.min(kind === "filter" ? 380 : 480, startWidth + moveEvent.clientX - startX));
+      if (kind === "filter") setFilterPaneWidth(next);
+      else setSignalPaneWidth(next);
+    }
+    function stop() {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+    }
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop, { once: true });
   }
 
   return (
@@ -1328,22 +2059,31 @@ export default function Home() {
         </nav>
 
         <div className="header-actions">
-          <span className="live-status"><span className="live-dot" /> DB ONLINE</span>
-          <button className="database-button" onClick={() => setDatabaseOpen(true)}>
+          <span className="mobile-catalog-count">{allSignals.length.toLocaleString()} SIGNALS</span>
+          <span className="live-status">
+            <span className={catalogError ? "error-dot" : "live-dot"} />
+            {catalogLoading ? "CATALOG LOADING" : catalogError ? "CATALOG OFFLINE" : "DATABASE READY"}
+          </span>
+          <button className="database-button" disabled={!workspaceReady} onClick={() => setDatabaseOpen(true)}>
             <Database size={16} />
-            <span>SigID <b>v74</b></span>
+            <span>{activeDatabaseName} <b>v{activeDatabaseVersion}</b></span>
             <ChevronDown size={14} />
           </button>
-          <a className="icon-button help-button" href="https://aresvalley.github.io/Artemis/" target="_blank" rel="noreferrer" aria-label="Open Artemis documentation">
-            <CircleHelp size={19} />
-          </a>
+          <button className="icon-button" disabled={!workspaceReady} onClick={() => setTagManagerOpen(true)} aria-label="Open tag manager"><Tags size={18} /></button>
+          <button className="icon-button" disabled={!workspaceReady} onClick={() => setPreferencesOpen(true)} aria-label="Open preferences"><Settings size={18} /></button>
+          <HelpDropdown updateAvailable={updateState === "available"} onCheckUpdates={checkUpdates} onOpenAbout={() => setAboutOpen(true)} />
         </div>
       </header>
 
       {view === "weather" ? (
-        <SpaceWeather data={weather} loading={weatherLoading} onRefresh={loadWeather} />
+        <Suspense fallback={<main className="weather-view"><div className="audio-empty">Loading the space-weather workspace…</div></main>}>
+          <FullSpaceWeather data={weather} loading={weatherLoading} onRefresh={loadWeather} />
+        </Suspense>
       ) : (
-        <main className={cx("library-layout", mobileDetailOpen && "mobile-detail-is-open")}>
+        <main
+          className={cx("library-layout", mobileDetailOpen && "mobile-detail-is-open")}
+          style={{ "--filter-pane-width": `${filterPaneWidth}px`, "--signal-pane-width": `${signalPaneWidth}px` } as React.CSSProperties}
+        >
           <FilterWorkbench
             filters={filters}
             onChange={setFilters}
@@ -1354,6 +2094,11 @@ export default function Home() {
             counts={filterMetadata.counts}
             acfCount={filterMetadata.acfCount}
             resultCount={filteredSignals.length}
+          />
+          <button
+            className="pane-splitter"
+            aria-label="Resize filter panel"
+            onPointerDown={(event) => startPaneResize("filter", event)}
           />
 
           <aside className="library-sidebar">
@@ -1384,10 +2129,15 @@ export default function Home() {
 
             <SignalList signals={filteredSignals} selectedId={selected?.pageid || ""} bookmarks={bookmarks} onSelect={selectSignal} />
 
-            <button className="add-signal-button" onClick={() => setNewSignalOpen(true)}>
-              <Plus size={17} /> Add field observation
+            <button className="add-signal-button" disabled={!workspaceReady} onClick={() => { setEditorSignalId(null); setNewSignalOpen(true); }}>
+              <Plus size={17} /> New signal
             </button>
           </aside>
+          <button
+            className="pane-splitter"
+            aria-label="Resize signal list"
+            onPointerDown={(event) => startPaneResize("signals", event)}
+          />
 
           <div className="detail-workspace">
             {selected ? (
@@ -1398,14 +2148,23 @@ export default function Home() {
                   onToggleSaved={toggleBookmark}
                   onBack={closeMobileDetail}
                   onOpenDocuments={openDocuments}
+                  onEdit={() => { if (workspaceReady) { setEditorSignalId(selected.pageid); setNewSignalOpen(true); } }}
+                  onRemoveCategory={removeSelectedCategory}
+                  onAddCategory={() => { if (workspaceReady) { setEditorSignalId(selected.pageid); setNewSignalOpen(true); } }}
                 />
-                <MediaPanel signal={selected} onOpenDocuments={openDocuments} />
+                <MediaPanel
+                  signal={selected}
+                  documents={selectedDocuments}
+                  onOpenDocuments={openDocuments}
+                  preferences={workspace.preferences}
+                  onAudioSettingsChange={updateAudioSettings}
+                />
               </>
             ) : (
               <div className="empty-detail">
                 <Search size={30} />
-                <strong>No matching signal</strong>
-                <span>Adjust the persistent filters to bring signals back into view.</span>
+                <strong>{catalogLoading ? "Loading signal catalog" : "No matching signal"}</strong>
+                <span>{catalogError || "Adjust the persistent filters to bring signals back into view."}</span>
               </div>
             )}
           </div>
@@ -1416,20 +2175,75 @@ export default function Home() {
         <NavButton active={view === "library"} icon={<Library size={19} />} label="Signals" onClick={() => changeView("library")} />
         <NavButton active={view === "saved"} icon={<Bookmark size={19} />} label="Saved" badge={bookmarks.size} onClick={() => changeView("saved")} />
         <NavButton active={view === "weather"} icon={<CloudSun size={20} />} label="Weather" onClick={() => changeView("weather")} />
-        <NavButton active={databaseOpen} icon={<Database size={19} />} label="Database" onClick={() => setDatabaseOpen(true)} />
+        <NavButton active={databaseOpen} icon={<Database size={19} />} label="Database" onClick={() => { if (workspaceReady) setDatabaseOpen(true); }} />
       </nav>
 
-      {documentsOpen && selected ? <DocumentsModal signal={selected} onClose={() => setDocumentsOpen(false)} /> : null}
-      {databaseOpen ? (
-        <DatabaseModal
-          customSignals={customSignals}
-          onClose={() => setDatabaseOpen(false)}
-          onNewSignal={() => { setDatabaseOpen(false); setNewSignalOpen(true); }}
-          onImport={importCustomSignals}
-          onExport={exportCustomSignals}
-        />
-      ) : null}
-      {newSignalOpen ? <NewSignalModal onClose={() => setNewSignalOpen(false)} onCreate={addCustomSignal} /> : null}
+      <div className="app-status" role="status">
+        <span className={catalogError ? "" : "status-ok"}>{catalogError ? "OFFLINE" : "READY"}</span>
+        <strong>{activeDatabaseName} v{activeDatabaseVersion}</strong>
+        <span>{allSignals.length.toLocaleString()} signals</span>
+        <span>{activeFilterCount} active filters</span>
+        <span>{weatherError || operationStatus}</span>
+      </div>
+
+      <Suspense fallback={null}>
+        {documentsOpen && selected ? (
+          <FullDocumentsManager
+            signalName={selected.title}
+            documents={managedDocuments}
+            onClose={() => setDocumentsOpen(false)}
+            onAdd={addDocument}
+            onUpdate={updateDocument}
+            onDelete={deleteDocument}
+            onSetMain={setMainDocument}
+          />
+        ) : null}
+        {databaseOpen ? (
+          <FullDatabaseManager
+            databases={managedDatabases}
+            currentDatabaseId={workspace.activeDatabaseId}
+            onClose={() => setDatabaseOpen(false)}
+            onCreate={createDatabase}
+            onLoad={(databaseId) => { loadDatabase(databaseId); setDatabaseOpen(false); }}
+            onRename={renameDatabase}
+            onDelete={deleteDatabase}
+            onImport={importDatabase}
+            onExport={exportDatabase}
+            onCheckUpdates={checkUpdates}
+            updateState={updateState}
+            updateMessage={updateMessage}
+          />
+        ) : null}
+        {newSignalOpen ? (
+          <FullSignalEditor
+            key={managedEditorSignal?.pageid || "new-signal"}
+            signal={managedEditorSignal ? signalToManaged(managedEditorSignal) : null}
+            categories={managedTags}
+            onClose={() => { setNewSignalOpen(false); setEditorSignalId(null); }}
+            onSave={saveManagedSignal}
+            onDelete={managedEditorSignal ? deleteManagedSignal : undefined}
+          />
+        ) : null}
+        {tagManagerOpen ? (
+          <FullTagManager
+            tags={managedTags}
+            onClose={() => setTagManagerOpen(false)}
+            onAdd={addTag}
+            onRename={renameTag}
+            onDelete={deleteTag}
+          />
+        ) : null}
+        {preferencesOpen ? (
+          <FullPreferences
+            preferences={managedPreferences(workspace.preferences)}
+            onClose={() => setPreferencesOpen(false)}
+            onSave={savePreferences}
+          />
+        ) : null}
+        {aboutOpen ? (
+          <FullAbout onClose={() => setAboutOpen(false)} applicationVersion="1.0" databaseVersion={activeDatabaseVersion} />
+        ) : null}
+      </Suspense>
     </div>
   );
 }

@@ -1,0 +1,110 @@
+.artemis-audio-player {
+  position: relative;
+  display: grid;
+  gap: 8px;
+}
+
+.audio-transport {
+  display: grid;
+  grid-template-columns: repeat(3, 34px) auto minmax(80px, 1fr) auto 34px;
+  align-items: center;
+  gap: 6px;
+}
+
+.audio-transport button,
+.audio-settings-popover button {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--panel-soft);
+  cursor: pointer;
+}
+
+.audio-transport button:hover,
+.audio-transport button.is-active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.audio-transport span,
+.audio-source-name {
+  color: var(--text-muted);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 10px;
+}
+
+.audio-transport input[type="range"] {
+  min-width: 0;
+  accent-color: var(--accent);
+}
+
+.audio-source-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.audio-settings-popover {
+  position: absolute;
+  z-index: 25;
+  right: 0;
+  top: calc(100% + 8px);
+  width: min(360px, calc(100vw - 42px));
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel-raised);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.42);
+}
+
+.audio-settings-popover > div,
+.audio-settings-popover label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.audio-settings-popover > div {
+  justify-content: space-between;
+}
+
+.audio-settings-popover label > span {
+  min-width: 100px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.audio-settings-popover label > input[type="range"],
+.audio-settings-popover label > select {
+  min-width: 0;
+  flex: 1;
+}
+
+.audio-settings-popover select {
+  min-height: 38px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-soft);
+  color: var(--text);
+}
+
+.audio-settings-popover small {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+@media (max-width: 520px) {
+  .audio-transport {
+    grid-template-columns: repeat(3, 34px) 1fr 34px;
+  }
+
+  .audio-transport > span {
+    display: none;
+  }
+}
