@@ -34,6 +34,12 @@ test("server-renders the Artemis signal workspace", async () => {
   assert.match(html, /<title>Artemis — RF Signal Reference<\/title>/i);
   assert.match(html, /Relocatable Over-the-Horizon Radar \(ROTHR\)/);
   assert.match(html, /identify 583 radio-frequency signals/);
+  assert.match(html, /Category \/ tag/);
+  assert.match(html, /Bandwidth/);
+  assert.match(html, /ACF/);
+  assert.match(html, /DB version/);
+  assert.match(html, /Matches any checked option within a filter/);
+  assert.ok((html.match(/signal-list-item/g) || []).length <= 30, "the server should render a virtualized result window");
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape|react-loading-skeleton/i);
 });
 

@@ -13,7 +13,6 @@ import {
   FileAudio,
   FileImage,
   FileText,
-  Filter,
   Gauge,
   Headphones,
   Import,
@@ -32,6 +31,7 @@ import {
   X,
 } from "lucide-react";
 import React, {
+  useCallback,
   useDeferredValue,
   useEffect,
   useMemo,
@@ -41,38 +41,20 @@ import React, {
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import signalData from "./data/signals.json";
-
-type Datum = { value: number | string; description?: string };
-
-type SignalRecord = {
-  pageid: string;
-  title: string;
-  added_since: number;
-  spectrum?: { filename?: string; url?: string } | null;
-  audio?: { filename?: string; url?: string } | null;
-  category: string[];
-  frequency: Datum[];
-  bandwidth: Datum[];
-  acf: Datum[];
-  modulation: Datum[];
-  mode: Datum[];
-  location: Datum[];
-  "short description": string;
-  description: string;
-  custom?: boolean;
-};
-
-type FiltersState = {
-  band: string;
-  category: string;
-  modulation: string;
-  location: string;
-  minFrequency: string;
-  maxFrequency: string;
-  minBandwidth: string;
-  maxBandwidth: string;
-  sinceVersion: string;
-};
+import {
+  buildSignalIndex,
+  countActiveFilterGroups,
+  createDefaultFilters,
+  filterSignals,
+  numericValues,
+  RF_BANDS,
+  textValues,
+  type Datum,
+  type EngineeringUnit,
+  type FiltersState,
+  type NumericFilterState,
+  type SignalRecord,
+} from "./lib/signal-filters";
 
 type SpaceWeatherData = {
   JSON_INFO?: { utc_date?: string; utc_time?: string };
@@ -113,44 +95,9 @@ type SpaceWeatherData = {
 type ViewName = "library" | "saved" | "weather";
 
 const BASE_SIGNALS = signalData as SignalRecord[];
-const DEFAULT_FILTERS: FiltersState = {
-  band: "",
-  category: "",
-  modulation: "",
-  location: "",
-  minFrequency: "",
-  maxFrequency: "",
-  minBandwidth: "",
-  maxBandwidth: "",
-  sinceVersion: "",
-};
-
-const RF_BANDS = [
-  { label: "ELF", min: 3, max: 30 },
-  { label: "SLF", min: 30, max: 300 },
-  { label: "ULF", min: 300, max: 3_000 },
-  { label: "VLF", min: 3_000, max: 30_000 },
-  { label: "LF", min: 30_000, max: 300_000 },
-  { label: "MF", min: 300_000, max: 3_000_000 },
-  { label: "HF", min: 3_000_000, max: 30_000_000 },
-  { label: "VHF", min: 30_000_000, max: 300_000_000 },
-  { label: "UHF", min: 300_000_000, max: 3_000_000_000 },
-  { label: "SHF", min: 3_000_000_000, max: 30_000_000_000 },
-  { label: "EHF", min: 30_000_000_000, max: 300_000_000_000 },
-];
 
 const MEDIA_BASE =
   "https://raw.githubusercontent.com/AresValley/Artemis-DB/main/static";
-
-function numericValues(items: Datum[]) {
-  return items
-    .map((item) => Number(item.value))
-    .filter((value) => Number.isFinite(value));
-}
-
-function textValues(items: Datum[]) {
-  return items.map((item) => String(item.value)).filter(Boolean);
-}
 
 function formatEngineering(value: number, kind: "frequency" | "time" = "frequency") {
   if (kind === "time") {
@@ -173,27 +120,6 @@ function formatRange(items: Datum[], kind: "frequency" | "time" = "frequency") {
   if (!values.length) return "Unknown";
   if (values.length === 1) return formatEngineering(values[0], kind);
   return `${formatEngineering(values[0], kind)} – ${formatEngineering(values.at(-1)!, kind)}`;
-}
-
-function signalSearchText(signal: SignalRecord) {
-  return [
-    signal.title,
-    signal["short description"],
-    signal.description,
-    ...signal.category,
-    ...textValues(signal.modulation),
-    ...textValues(signal.mode),
-    ...textValues(signal.location),
-  ]
-    .join(" ")
-    .toLocaleLowerCase();
-}
-
-function overlaps(values: number[], min: number, max: number) {
-  if (!values.length) return false;
-  const low = Math.min(...values);
-  const high = Math.max(...values);
-  return low <= max && high >= min;
 }
 
 function cx(...classes: Array<string | false | null | undefined>) {
@@ -293,39 +219,82 @@ function SignalList({
   bookmarks: Set<string>;
   onSelect: (signal: SignalRecord) => void;
 }) {
-  const selectedRef = useRef<HTMLButtonElement>(null);
+  const rowHeight = 97;
+  const overscan = 5;
+  const listRef = useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(620);
+  const startIndex = Math.max(0, Math.floor(scrollTop / rowHeight) - overscan);
+  const visibleCount = Math.ceil(viewportHeight / rowHeight) + overscan * 2;
+  const endIndex = Math.min(signals.length, startIndex + visibleCount);
+  const visibleSignals = signals.slice(startIndex, endIndex);
 
   useEffect(() => {
-    selectedRef.current?.scrollIntoView({ block: "center" });
-  }, [selectedId]);
+    const element = listRef.current;
+    if (!element) return;
+    const observer = new ResizeObserver(([entry]) => setViewportHeight(entry.contentRect.height));
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    listRef.current?.scrollTo({ top: 0 });
+  }, [signals]);
+
+  useEffect(() => {
+    const element = listRef.current;
+    const selectedIndex = signals.findIndex((signal) => signal.pageid === selectedId);
+    if (!element || selectedIndex < 0) return;
+    const rowTop = selectedIndex * rowHeight;
+    const rowBottom = rowTop + rowHeight;
+    if (rowTop < element.scrollTop || rowBottom > element.scrollTop + element.clientHeight) {
+      element.scrollTo({ top: Math.max(0, rowTop - element.clientHeight / 2 + rowHeight / 2) });
+    }
+  }, [selectedId, signals]);
 
   return (
-    <div className="signal-list" role="listbox" aria-label="Signals">
-      {signals.map((signal) => (
-        <button
-          className={cx("signal-list-item", selectedId === signal.pageid && "is-selected")}
-          key={signal.pageid}
-          ref={selectedId === signal.pageid ? selectedRef : undefined}
-          onClick={() => onSelect(signal)}
-          role="option"
-          aria-selected={selectedId === signal.pageid}
-        >
-          <span className="signal-item-topline">
-            <strong>{signal.title}</strong>
-            {bookmarks.has(signal.pageid) ? (
-              <Star className="saved-star" size={13} fill="currentColor" aria-label="Saved" />
-            ) : null}
-          </span>
-          <span className="signal-list-summary">
-            {signal["short description"] || "User-created signal reference"}
-          </span>
-          <span className="signal-list-meta">
-            <span>{formatRange(signal.frequency)}</span>
-            <span aria-hidden="true">·</span>
-            <span>{textValues(signal.modulation).slice(0, 2).join(" / ") || "Unknown"}</span>
-          </span>
-        </button>
-      ))}
+    <div
+      className="signal-list"
+      ref={listRef}
+      role="listbox"
+      aria-label="Signals"
+      tabIndex={0}
+      onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+    >
+      {signals.length ? (
+        <div className="signal-list-window" style={{ height: signals.length * rowHeight }}>
+          {visibleSignals.map((signal, visibleIndex) => {
+            const index = startIndex + visibleIndex;
+            return (
+              <button
+                className={cx("signal-list-item", selectedId === signal.pageid && "is-selected")}
+                key={signal.pageid}
+                style={{ transform: `translateY(${index * rowHeight}px)` }}
+                onClick={() => onSelect(signal)}
+                role="option"
+                aria-selected={selectedId === signal.pageid}
+                aria-posinset={index + 1}
+                aria-setsize={signals.length}
+              >
+                <span className="signal-item-topline">
+                  <strong>{signal.title}</strong>
+                  {bookmarks.has(signal.pageid) ? (
+                    <Star className="saved-star" size={13} fill="currentColor" aria-label="Saved" />
+                  ) : null}
+                </span>
+                <span className="signal-list-summary">
+                  {signal["short description"] || "User-created signal reference"}
+                </span>
+                <span className="signal-list-meta">
+                  <span>{formatRange(signal.frequency)}</span>
+                  <span aria-hidden="true">·</span>
+                  <span>{textValues(signal.modulation).slice(0, 2).join(" / ") || "Unknown"}</span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
       {!signals.length ? (
         <div className="empty-list">
           <Search size={28} />
@@ -337,7 +306,7 @@ function SignalList({
   );
 }
 
-function SignalDetail({
+const SignalDetail = React.memo(function SignalDetail({
   signal,
   saved,
   onToggleSaved,
@@ -425,7 +394,7 @@ function SignalDetail({
           <ParameterRow label="Bandwidth" values={signal.bandwidth} formatter={(v) => formatEngineering(v)} />
           <ParameterRow label="Modulation" values={signal.modulation} />
           <ParameterRow label="Mode" values={signal.mode} />
-          <ParameterRow label="ACF" values={signal.acf} formatter={(v) => formatEngineering(v, "time")} />
+          <ParameterRow label="ACF" values={signal.acf} formatter={(v) => `${trimNumber(v)} ms`} />
           <ParameterRow label="Location" values={signal.location} />
         </dl>
       </section>
@@ -455,9 +424,9 @@ function SignalDetail({
       </button>
     </article>
   );
-}
+});
 
-function MediaPanel({
+const MediaPanel = React.memo(function MediaPanel({
   signal,
   onOpenDocuments,
 }: {
@@ -470,9 +439,13 @@ function MediaPanel({
   const rawAudio = signal.audio
     ? `${MEDIA_BASE}/${signal.pageid}/media/1.ogg`
     : "";
-  const [imageSource, setImageSource] = useState(rawImage);
-
-  useEffect(() => setImageSource(rawImage), [rawImage]);
+  const [failedImageSources, setFailedImageSources] = useState<Set<string>>(() => new Set());
+  const fallbackImage = signal.spectrum?.url || "";
+  const imageSource = rawImage && !failedImageSources.has(rawImage)
+    ? rawImage
+    : fallbackImage && !failedImageSources.has(fallbackImage)
+      ? fallbackImage
+      : "";
 
   return (
     <aside className="media-panel" aria-label="Signal media">
@@ -491,13 +464,7 @@ function MediaPanel({
               alt={`Spectrum waterfall for ${signal.title}`}
               loading="eager"
               decoding="async"
-              onError={() => {
-                if (signal.spectrum?.url && imageSource !== signal.spectrum.url) {
-                  setImageSource(signal.spectrum.url);
-                } else {
-                  setImageSource("");
-                }
-              }}
+              onError={() => setFailedImageSources((current) => new Set(current).add(imageSource))}
             />
           ) : (
             <div className="media-placeholder">
@@ -548,149 +515,272 @@ function MediaPanel({
       </div>
     </aside>
   );
+});
+
+function FacetFilter({
+  label,
+  options,
+  selected,
+  counts,
+  onChange,
+  formatOption = (value) => value,
+}: {
+  label: string;
+  options: string[];
+  selected: string[];
+  counts: Map<string, number>;
+  onChange: (next: string[]) => void;
+  formatOption?: (value: string) => string;
+}) {
+  const [search, setSearch] = useState("");
+  const visibleOptions = useMemo(() => {
+    const term = search.trim().toLocaleLowerCase();
+    return term
+      ? options.filter((option) => option.toLocaleLowerCase().includes(term))
+      : options;
+  }, [options, search]);
+
+  function toggle(option: string) {
+    onChange(
+      selected.includes(option)
+        ? selected.filter((value) => value !== option)
+        : [...selected, option],
+    );
+  }
+
+  return (
+    <details className={cx("facet-filter", selected.length > 0 && "is-active")}>
+      <summary>
+        <span>{label}</span>
+        <small>{selected.length ? `${selected.length} selected` : "Any"}</small>
+        <ChevronDown size={14} />
+      </summary>
+      <div className="facet-menu">
+        <div className="facet-menu-heading">
+          <strong>{label}</strong>
+          {selected.length ? <button onClick={() => onChange([])}>Clear</button> : null}
+        </div>
+        {options.length > 12 ? (
+          <label className="facet-search">
+            <Search size={14} />
+            <input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder={`Find ${label.toLocaleLowerCase()}`}
+              aria-label={`Search ${label.toLocaleLowerCase()} options`}
+            />
+          </label>
+        ) : null}
+        <div className="facet-options">
+          {visibleOptions.map((option) => (
+            <label key={option}>
+              <input
+                type="checkbox"
+                checked={selected.includes(option)}
+                onChange={() => toggle(option)}
+              />
+              <span>{formatOption(option)}</span>
+              <small>{counts.get(option) || 0}</small>
+            </label>
+          ))}
+          {!visibleOptions.length ? <p>No matching options</p> : null}
+        </div>
+      </div>
+    </details>
+  );
 }
 
-function FilterModal({
+function NumericFilter({
+  label,
+  filter,
+  onChange,
+  units,
+  availableCount,
+}: {
+  label: string;
+  filter: NumericFilterState;
+  onChange: (next: NumericFilterState) => void;
+  units: EngineeringUnit[];
+  availableCount?: number;
+}) {
+  const isUsable = filter.active && filter.value.trim() !== "";
+  return (
+    <div className={cx("numeric-filter", isUsable && "is-active")}>
+      <div className="numeric-filter-heading">
+        <label>
+          <input
+            type="checkbox"
+            checked={filter.active}
+            onChange={(event) => onChange({ ...filter, active: event.target.checked })}
+          />
+          <span>{label}</span>
+        </label>
+        <small>{availableCount ? `${availableCount} recorded` : `±${filter.tolerance}%`}</small>
+      </div>
+      <div className="numeric-filter-controls">
+        <input
+          type="number"
+          min="0"
+          step="any"
+          inputMode="decimal"
+          value={filter.value}
+          placeholder="Target"
+          aria-label={`${label} target value`}
+          onChange={(event) => onChange({
+            ...filter,
+            value: event.target.value,
+            active: event.target.value !== "" ? true : filter.active,
+          })}
+        />
+        {units.length > 1 ? (
+          <select
+            value={filter.unit}
+            aria-label={`${label} unit`}
+            onChange={(event) => onChange({ ...filter, unit: event.target.value as EngineeringUnit })}
+          >
+            {units.map((unit) => <option key={unit}>{unit}</option>)}
+          </select>
+        ) : <span className="fixed-unit">{units[0]}</span>}
+        <label className="tolerance-control">
+          <span>±{filter.tolerance}%</span>
+          <input
+            type="range"
+            min="0"
+            max="50"
+            step="1"
+            value={filter.tolerance}
+            aria-label={`${label} tolerance percentage`}
+            onChange={(event) => onChange({ ...filter, tolerance: Number(event.target.value) })}
+          />
+        </label>
+      </div>
+    </div>
+  );
+}
+
+function FilterWorkbench({
   filters,
   onChange,
-  onClose,
   categories,
   modulations,
   locations,
+  versions,
+  counts,
+  acfCount,
   resultCount,
 }: {
   filters: FiltersState;
   onChange: (next: FiltersState) => void;
-  onClose: () => void;
   categories: string[];
   modulations: string[];
   locations: string[];
+  versions: string[];
+  counts: {
+    categories: Map<string, number>;
+    modulations: Map<string, number>;
+    locations: Map<string, number>;
+    versions: Map<string, number>;
+  };
+  acfCount: number;
   resultCount: number;
 }) {
-  const update = (key: keyof FiltersState, value: string) =>
-    onChange({ ...filters, [key]: value });
+  const activeCount = countActiveFilterGroups(filters);
+  const quickCategories = ["Digital", "Military", "Amateur Radio", "Radar", "Satellite"]
+    .filter((category) => categories.includes(category));
+  const setNumeric = (key: "frequency" | "bandwidth" | "acf", next: NumericFilterState) =>
+    onChange({ ...filters, [key]: next });
+  const toggleCategory = (category: string) => onChange({
+    ...filters,
+    categories: filters.categories.includes(category)
+      ? filters.categories.filter((value) => value !== category)
+      : [...filters.categories, category],
+  });
 
   return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
-      <section
-        className="modal filter-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="filter-title"
-        onMouseDown={(event) => event.stopPropagation()}
-      >
-        <div className="modal-heading">
-          <div>
-            <span className="eyebrow">NARROW THE LIBRARY</span>
-            <h2 id="filter-title">Advanced filters</h2>
-          </div>
-          <button className="icon-button" onClick={onClose} aria-label="Close filters">
-            <X size={19} />
-          </button>
+    <section className="filter-workbench" aria-label="Signal filters">
+      <div className="filter-workbench-heading">
+        <span><SlidersHorizontal size={14} /> Filters</span>
+        <output aria-live="polite">{resultCount} matches</output>
+        <button disabled={!activeCount} onClick={() => onChange(createDefaultFilters())}>Reset</button>
+      </div>
+      <div className="filter-workbench-body">
+        <div className="category-shortcuts" aria-label="Category shortcuts">
+          {quickCategories.map((category) => (
+            <button
+              className={filters.categories.includes(category) ? "is-active" : ""}
+              key={category}
+              aria-pressed={filters.categories.includes(category)}
+              onClick={() => toggleCategory(category)}
+            >
+              {category}
+            </button>
+          ))}
         </div>
 
-        <div className="filter-form">
-          <label>
-            <span>Radio band</span>
-            <select value={filters.band} onChange={(e) => update("band", e.target.value)}>
-              <option value="">All bands</option>
-              {RF_BANDS.map((band) => (
-                <option key={band.label}>{band.label}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span>Category</span>
-            <select value={filters.category} onChange={(e) => update("category", e.target.value)}>
-              <option value="">All categories</option>
-              {categories.map((category) => (
-                <option key={category}>{category}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span>Modulation</span>
-            <select value={filters.modulation} onChange={(e) => update("modulation", e.target.value)}>
-              <option value="">All modulations</option>
-              {modulations.map((modulation) => (
-                <option key={modulation}>{modulation}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span>Location</span>
-            <select value={filters.location} onChange={(e) => update("location", e.target.value)}>
-              <option value="">All locations</option>
-              {locations.map((location) => (
-                <option key={location}>{location}</option>
-              ))}
-            </select>
-          </label>
-          <div className="field-group">
-            <span>Frequency range (MHz)</span>
-            <div className="range-inputs">
-              <input
-                type="number"
-                inputMode="decimal"
-                min="0"
-                placeholder="Min"
-                value={filters.minFrequency}
-                onChange={(e) => update("minFrequency", e.target.value)}
-              />
-              <span>to</span>
-              <input
-                type="number"
-                inputMode="decimal"
-                min="0"
-                placeholder="Max"
-                value={filters.maxFrequency}
-                onChange={(e) => update("maxFrequency", e.target.value)}
-              />
-            </div>
-          </div>
-          <div className="field-group">
-            <span>Bandwidth range (kHz)</span>
-            <div className="range-inputs">
-              <input
-                type="number"
-                inputMode="decimal"
-                min="0"
-                placeholder="Min"
-                value={filters.minBandwidth}
-                onChange={(e) => update("minBandwidth", e.target.value)}
-              />
-              <span>to</span>
-              <input
-                type="number"
-                inputMode="decimal"
-                min="0"
-                placeholder="Max"
-                value={filters.maxBandwidth}
-                onChange={(e) => update("maxBandwidth", e.target.value)}
-              />
-            </div>
-          </div>
-          <label>
-            <span>Introduced in DB version</span>
-            <select value={filters.sinceVersion} onChange={(e) => update("sinceVersion", e.target.value)}>
-              <option value="">Any version</option>
-              {Array.from({ length: 10 }, (_, index) => 74 - index).map((version) => (
-                <option value={version} key={version}>v{version}</option>
-              ))}
-            </select>
-          </label>
+        <div className="numeric-filters">
+          <NumericFilter
+            label="Frequency"
+            filter={filters.frequency}
+            onChange={(next) => setNumeric("frequency", next)}
+            units={["Hz", "kHz", "MHz", "GHz"]}
+          />
+          <NumericFilter
+            label="Bandwidth"
+            filter={filters.bandwidth}
+            onChange={(next) => setNumeric("bandwidth", next)}
+            units={["Hz", "kHz", "MHz", "GHz"]}
+          />
+          <NumericFilter
+            label="ACF"
+            filter={filters.acf}
+            onChange={(next) => setNumeric("acf", next)}
+            units={["ms"]}
+            availableCount={acfCount}
+          />
         </div>
 
-        <div className="modal-footer">
-          <button className="secondary-button" onClick={() => onChange(DEFAULT_FILTERS)}>
-            Reset all
-          </button>
-          <button className="primary-button" onClick={onClose}>
-            Show {resultCount} signals
-          </button>
+        <div className="facet-grid">
+          <FacetFilter
+            label="Category / tag"
+            options={categories}
+            selected={filters.categories}
+            counts={counts.categories}
+            onChange={(categories) => onChange({ ...filters, categories })}
+          />
+          <FacetFilter
+            label="Modulation"
+            options={modulations}
+            selected={filters.modulations}
+            counts={counts.modulations}
+            onChange={(modulations) => onChange({ ...filters, modulations })}
+          />
+          <FacetFilter
+            label="Location"
+            options={locations}
+            selected={filters.locations}
+            counts={counts.locations}
+            onChange={(locations) => onChange({ ...filters, locations })}
+          />
+          <FacetFilter
+            label="DB version"
+            options={versions}
+            selected={filters.versions}
+            counts={counts.versions}
+            onChange={(versions) => onChange({ ...filters, versions })}
+            formatOption={(version) => `v${version}`}
+          />
         </div>
-      </section>
-    </div>
+
+        <label className="band-shortcut">
+          <span>RF band shortcut <small>Web convenience</small></span>
+          <select value={filters.band} onChange={(event) => onChange({ ...filters, band: event.target.value })}>
+            <option value="">Any band</option>
+            {RF_BANDS.map((band) => <option key={band.label}>{band.label}</option>)}
+          </select>
+        </label>
+        <p className="filter-logic">Matches any checked option within a filter and every active filter together.</p>
+      </div>
+    </section>
   );
 }
 
@@ -1038,12 +1128,11 @@ export default function Home() {
   const [view, setView] = useState<ViewName>("library");
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
-  const [filters, setFilters] = useState<FiltersState>(DEFAULT_FILTERS);
+  const [filters, setFilters] = useState<FiltersState>(() => createDefaultFilters());
   const [selectedId, setSelectedId] = useState("5803");
   const [bookmarks, setBookmarks] = useState<Set<string>>(new Set());
   const [customSignals, setCustomSignals] = useState<SignalRecord[]>([]);
   const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
-  const [filterOpen, setFilterOpen] = useState(false);
   const [documentsOpen, setDocumentsOpen] = useState(false);
   const [databaseOpen, setDatabaseOpen] = useState(false);
   const [newSignalOpen, setNewSignalOpen] = useState(false);
@@ -1052,79 +1141,64 @@ export default function Home() {
   const searchRef = useRef<HTMLInputElement>(null);
 
   const allSignals = useMemo(() => [...customSignals, ...BASE_SIGNALS], [customSignals]);
-  const searchable = useMemo(
-    () => new Map(allSignals.map((signal) => [signal.pageid, signalSearchText(signal)])),
-    [allSignals],
-  );
+  const signalIndex = useMemo(() => buildSignalIndex(allSignals), [allSignals]);
+  const filterMetadata = useMemo(() => {
+    const categories = new Map<string, number>();
+    const modulations = new Map<string, number>();
+    const locations = new Map<string, number>();
+    const versions = new Map<string, number>();
+    let acfCount = 0;
+    const increment = (map: Map<string, number>, value: string) =>
+      map.set(value, (map.get(value) || 0) + 1);
 
-  const categories = useMemo(
-    () => Array.from(new Set(allSignals.flatMap((signal) => signal.category))).sort(),
-    [allSignals],
-  );
-  const modulations = useMemo(
-    () => Array.from(new Set(allSignals.flatMap((signal) => textValues(signal.modulation)))).sort(),
-    [allSignals],
-  );
-  const locations = useMemo(
-    () => Array.from(new Set(allSignals.flatMap((signal) => textValues(signal.location)))).sort(),
-    [allSignals],
-  );
-
-  const filteredSignals = useMemo(() => {
-    const terms = deferredQuery.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
-    const selectedBand = RF_BANDS.find((band) => band.label === filters.band);
-    const minFrequency = filters.minFrequency ? Number(filters.minFrequency) * 1_000_000 : null;
-    const maxFrequency = filters.maxFrequency ? Number(filters.maxFrequency) * 1_000_000 : null;
-    const minBandwidth = filters.minBandwidth ? Number(filters.minBandwidth) * 1_000 : null;
-    const maxBandwidth = filters.maxBandwidth ? Number(filters.maxBandwidth) * 1_000 : null;
-
-    const result = allSignals.filter((signal) => {
-      const corpus = searchable.get(signal.pageid) || "";
-      if (terms.length && !terms.every((term) => corpus.includes(term))) return false;
-      if (view === "saved" && !bookmarks.has(signal.pageid)) return false;
-      if (filters.category && !signal.category.includes(filters.category)) return false;
-      if (filters.modulation && !textValues(signal.modulation).includes(filters.modulation)) return false;
-      if (filters.location && !textValues(signal.location).includes(filters.location)) return false;
-      if (filters.sinceVersion && signal.added_since !== Number(filters.sinceVersion)) return false;
-      if (selectedBand && !overlaps(numericValues(signal.frequency), selectedBand.min, selectedBand.max)) return false;
-      if ((minFrequency !== null || maxFrequency !== null) && !overlaps(
-        numericValues(signal.frequency),
-        minFrequency ?? 0,
-        maxFrequency ?? Number.MAX_SAFE_INTEGER,
-      )) return false;
-      if ((minBandwidth !== null || maxBandwidth !== null) && !overlaps(
-        numericValues(signal.bandwidth),
-        minBandwidth ?? 0,
-        maxBandwidth ?? Number.MAX_SAFE_INTEGER,
-      )) return false;
-      return true;
+    allSignals.forEach((signal) => {
+      new Set(signal.category).forEach((value) => increment(categories, value));
+      new Set(textValues(signal.modulation)).forEach((value) => increment(modulations, value));
+      new Set(textValues(signal.location)).forEach((value) => increment(locations, value));
+      increment(versions, String(signal.added_since));
+      if (signal.acf.length) acfCount += 1;
     });
 
-    if (terms.length) {
-      result.sort((a, b) => {
-        const aStarts = a.title.toLocaleLowerCase().startsWith(terms[0]) ? 0 : 1;
-        const bStarts = b.title.toLocaleLowerCase().startsWith(terms[0]) ? 0 : 1;
-        return aStarts - bStarts || a.title.localeCompare(b.title);
-      });
-    }
-    return result;
-  }, [allSignals, bookmarks, deferredQuery, filters, searchable, view]);
+    return {
+      options: {
+        categories: Array.from(categories.keys()).sort(),
+        modulations: Array.from(modulations.keys()).sort(),
+        locations: Array.from(locations.keys()).sort(),
+        versions: Array.from(versions.keys()).sort((a, b) => Number(b) - Number(a)),
+      },
+      counts: { categories, modulations, locations, versions },
+      acfCount,
+    };
+  }, [allSignals]);
+
+  const filteredSignals = useMemo(() => {
+    return filterSignals({
+      signals: allSignals,
+      index: signalIndex,
+      query: deferredQuery,
+      filters,
+      savedOnly: view === "saved",
+      bookmarks,
+    });
+  }, [allSignals, bookmarks, deferredQuery, filters, signalIndex, view]);
 
   const selected =
-    allSignals.find((signal) => signal.pageid === selectedId) || filteredSignals[0] || allSignals[0];
+    filteredSignals.find((signal) => signal.pageid === selectedId) || filteredSignals[0] || null;
 
-  const activeFilterCount = Object.values(filters).filter(Boolean).length;
-  const quickCategories = ["Digital", "Military", "Amateur Radio", "Radar", "Satellite"];
+  const activeFilterCount = countActiveFilterGroups(filters);
 
   useEffect(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem("artemis-saved") || "[]") as string[];
-      const local = JSON.parse(localStorage.getItem("artemis-custom-signals") || "[]") as SignalRecord[];
-      setBookmarks(new Set(saved));
-      setCustomSignals(Array.isArray(local) ? local : []);
-    } catch {
-      // A corrupted local preference should never block the reference library.
-    }
+    const frame = requestAnimationFrame(() => {
+      try {
+        const saved = JSON.parse(localStorage.getItem("artemis-saved") || "[]") as string[];
+        const local = JSON.parse(localStorage.getItem("artemis-custom-signals") || "[]") as SignalRecord[];
+        setBookmarks(new Set(saved));
+        setCustomSignals(Array.isArray(local) ? local : []);
+      } catch {
+        // A corrupted local preference should never block the reference library.
+      }
+    });
+    return () => cancelAnimationFrame(frame);
   }, []);
 
   useEffect(() => {
@@ -1138,18 +1212,17 @@ export default function Home() {
   useEffect(() => {
     function handleKeydown(event: KeyboardEvent) {
       const target = event.target as HTMLElement;
-      const inField = /INPUT|TEXTAREA|SELECT/.test(target.tagName);
-      if (event.key === "/" && !inField) {
+      const inInteractiveControl = Boolean(target.closest("input, textarea, select, button, a, summary, [contenteditable='true']"));
+      if (event.key === "/" && !inInteractiveControl) {
         event.preventDefault();
         searchRef.current?.focus();
       }
       if (event.key === "Escape") {
-        setFilterOpen(false);
         setDocumentsOpen(false);
         setDatabaseOpen(false);
         setNewSignalOpen(false);
       }
-      if (!inField && view !== "weather" && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+      if (!inInteractiveControl && view !== "weather" && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
         event.preventDefault();
         const index = filteredSignals.findIndex((signal) => signal.pageid === selectedId);
         const nextIndex = event.key === "ArrowDown"
@@ -1175,29 +1248,30 @@ export default function Home() {
     }
   }
 
-  useEffect(() => {
-    if (view === "weather" && !weather && !weatherLoading) void loadWeather();
-  }, [view, weather, weatherLoading]);
-
   function changeView(next: ViewName) {
     setView(next);
     setMobileDetailOpen(false);
     if (next === "weather") setQuery("");
+    if (next === "weather" && !weather && !weatherLoading) void loadWeather();
   }
 
-  function selectSignal(signal: SignalRecord) {
+  const selectSignal = useCallback((signal: SignalRecord) => {
     setSelectedId(signal.pageid);
     setMobileDetailOpen(true);
-  }
+  }, []);
 
-  function toggleBookmark() {
+  const toggleBookmark = useCallback(() => {
+    if (!selected) return;
     setBookmarks((current) => {
       const next = new Set(current);
       if (next.has(selected.pageid)) next.delete(selected.pageid);
       else next.add(selected.pageid);
       return next;
     });
-  }
+  }, [selected]);
+
+  const closeMobileDetail = useCallback(() => setMobileDetailOpen(false), []);
+  const openDocuments = useCallback(() => setDocumentsOpen(true), []);
 
   function addCustomSignal(signal: SignalRecord) {
     setCustomSignals((current) => [signal, ...current]);
@@ -1270,6 +1344,18 @@ export default function Home() {
         <SpaceWeather data={weather} loading={weatherLoading} onRefresh={loadWeather} />
       ) : (
         <main className={cx("library-layout", mobileDetailOpen && "mobile-detail-is-open")}>
+          <FilterWorkbench
+            filters={filters}
+            onChange={setFilters}
+            categories={filterMetadata.options.categories}
+            modulations={filterMetadata.options.modulations}
+            locations={filterMetadata.options.locations}
+            versions={filterMetadata.options.versions}
+            counts={filterMetadata.counts}
+            acfCount={filterMetadata.acfCount}
+            resultCount={filteredSignals.length}
+          />
+
           <aside className="library-sidebar">
             <div className="sidebar-tools">
               <div className="search-box">
@@ -1287,37 +1373,16 @@ export default function Home() {
                   <kbd>/</kbd>
                 )}
               </div>
-              <button
-                className={cx("filter-button", activeFilterCount > 0 && "has-filters")}
-                onClick={() => setFilterOpen(true)}
-                aria-label="Open filters"
-              >
-                <Filter size={18} />
-                {activeFilterCount ? <span>{activeFilterCount}</span> : null}
-              </button>
-            </div>
-
-            <div className="quick-filters" aria-label="Quick category filters">
-              <button className={!filters.category ? "is-active" : ""} onClick={() => setFilters({ ...filters, category: "" })}>All</button>
-              {quickCategories.map((category) => (
-                <button
-                  className={filters.category === category ? "is-active" : ""}
-                  key={category}
-                  onClick={() => setFilters({ ...filters, category: filters.category === category ? "" : category })}
-                >
-                  {category}
-                </button>
-              ))}
             </div>
 
             <div className="results-heading">
               <span>
                 <strong>{filteredSignals.length}</strong> {view === "saved" ? "saved" : "signals"}
               </span>
-              {activeFilterCount ? <button onClick={() => setFilters(DEFAULT_FILTERS)}>Clear filters</button> : <span>NAME / FREQUENCY</span>}
+              {activeFilterCount ? <span>{activeFilterCount} FILTERS ACTIVE</span> : <span>NAME / FREQUENCY</span>}
             </div>
 
-            <SignalList signals={filteredSignals} selectedId={selected.pageid} bookmarks={bookmarks} onSelect={selectSignal} />
+            <SignalList signals={filteredSignals} selectedId={selected?.pageid || ""} bookmarks={bookmarks} onSelect={selectSignal} />
 
             <button className="add-signal-button" onClick={() => setNewSignalOpen(true)}>
               <Plus size={17} /> Add field observation
@@ -1325,14 +1390,24 @@ export default function Home() {
           </aside>
 
           <div className="detail-workspace">
-            <SignalDetail
-              signal={selected}
-              saved={bookmarks.has(selected.pageid)}
-              onToggleSaved={toggleBookmark}
-              onBack={() => setMobileDetailOpen(false)}
-              onOpenDocuments={() => setDocumentsOpen(true)}
-            />
-            <MediaPanel signal={selected} onOpenDocuments={() => setDocumentsOpen(true)} />
+            {selected ? (
+              <>
+                <SignalDetail
+                  signal={selected}
+                  saved={bookmarks.has(selected.pageid)}
+                  onToggleSaved={toggleBookmark}
+                  onBack={closeMobileDetail}
+                  onOpenDocuments={openDocuments}
+                />
+                <MediaPanel signal={selected} onOpenDocuments={openDocuments} />
+              </>
+            ) : (
+              <div className="empty-detail">
+                <Search size={30} />
+                <strong>No matching signal</strong>
+                <span>Adjust the persistent filters to bring signals back into view.</span>
+              </div>
+            )}
           </div>
         </main>
       )}
@@ -1344,18 +1419,7 @@ export default function Home() {
         <NavButton active={databaseOpen} icon={<Database size={19} />} label="Database" onClick={() => setDatabaseOpen(true)} />
       </nav>
 
-      {filterOpen ? (
-        <FilterModal
-          filters={filters}
-          onChange={setFilters}
-          onClose={() => setFilterOpen(false)}
-          categories={categories}
-          modulations={modulations}
-          locations={locations}
-          resultCount={filteredSignals.length}
-        />
-      ) : null}
-      {documentsOpen ? <DocumentsModal signal={selected} onClose={() => setDocumentsOpen(false)} /> : null}
+      {documentsOpen && selected ? <DocumentsModal signal={selected} onClose={() => setDocumentsOpen(false)} /> : null}
       {databaseOpen ? (
         <DatabaseModal
           customSignals={customSignals}
