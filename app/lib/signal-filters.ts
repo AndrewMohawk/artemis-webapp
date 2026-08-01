@@ -73,12 +73,14 @@ type SignalIndexEntry = {
 
 export type SignalIndex = Map<string, SignalIndexEntry>;
 
+export const DEFAULT_NUMERIC_TOLERANCE = 10;
+
 export function createDefaultFilters(): FiltersState {
   return {
     band: "",
-    frequency: { active: false, value: "", unit: "kHz", tolerance: 0 },
-    bandwidth: { active: false, value: "", unit: "kHz", tolerance: 0 },
-    acf: { active: false, value: "", unit: "ms", tolerance: 0 },
+    frequency: { active: false, value: "", unit: "kHz", tolerance: DEFAULT_NUMERIC_TOLERANCE },
+    bandwidth: { active: false, value: "", unit: "kHz", tolerance: DEFAULT_NUMERIC_TOLERANCE },
+    acf: { active: false, value: "", unit: "ms", tolerance: DEFAULT_NUMERIC_TOLERANCE },
     categories: [],
     modulations: [],
     locations: [],

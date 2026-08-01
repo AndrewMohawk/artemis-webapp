@@ -23,6 +23,20 @@ function apply(filters, query = "") {
   });
 }
 
+test("numeric filters start with a ten percent tolerance", () => {
+  const filters = createDefaultFilters();
+  assert.deepEqual(
+    [filters.frequency.tolerance, filters.bandwidth.tolerance, filters.acf.tolerance],
+    [10, 10, 10],
+  );
+});
+
+test("the default tolerance includes nearby recorded values", () => {
+  const filters = createDefaultFilters();
+  filters.frequency = { ...filters.frequency, active: true, value: "2", unit: "MHz" };
+  assert.ok(apply(filters).some((signal) => signal.title === "STANAG 4285"));
+});
+
 test("ACF matches an exact Artemis millisecond value", () => {
   const filters = createDefaultFilters();
   filters.acf = { active: true, value: "106.66", unit: "ms", tolerance: 0 };

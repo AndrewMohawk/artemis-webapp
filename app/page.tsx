@@ -923,7 +923,7 @@ function FilterWorkbench({
   acfCount: number;
   resultCount: number;
 }) {
-  const activeCount = countActiveFilterGroups(filters);
+  const canReset = JSON.stringify(filters) !== JSON.stringify(createDefaultFilters());
   const quickCategories = ["Digital", "Military", "Amateur Radio", "Radar", "Satellite"]
     .filter((category) => categories.includes(category));
   const setNumeric = (key: "frequency" | "bandwidth" | "acf", next: NumericFilterState) =>
@@ -940,7 +940,7 @@ function FilterWorkbench({
       <div className="filter-workbench-heading">
         <span><SlidersHorizontal size={14} /> Filters</span>
         <output aria-live="polite">{resultCount} matches</output>
-        <button disabled={!activeCount} onClick={() => onChange(createDefaultFilters())}>Reset</button>
+        <button disabled={!canReset} onClick={() => onChange(createDefaultFilters())}>Reset</button>
       </div>
       <div className="filter-workbench-body">
         <div className="category-shortcuts" aria-label="Category shortcuts">
