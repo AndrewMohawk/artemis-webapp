@@ -1,0 +1,9 @@
+.git
+.openai/*
+!.openai/hosting.json
+.vinext
+.wrangler
+dist
+node_modules
+npm-debug.log*
+tests
