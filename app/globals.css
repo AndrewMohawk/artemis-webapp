@@ -470,6 +470,7 @@ a {
 }
 
 .category-shortcuts {
+  min-height: 28px;
   display: flex;
   gap: 5px;
   overflow-x: auto;
