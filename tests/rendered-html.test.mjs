@@ -76,7 +76,8 @@ test("ships the responsive custom audio-player styles", async () => {
   ]);
 
   assert.match(component, /import "\.\.\/audio-player\.css";/);
-  assert.match(component, /className="audio-source-name"/);
-  assert.match(styles, /grid-template-areas:[\s\S]*"play stop loop \. settings"/);
+  assert.match(component, /className="audio-track-title"/);
+  assert.match(component, /aria-valuetext=/);
+  assert.match(styles, /\.audio-primary-row[\s\S]*grid-template-columns:\s*44px minmax\(0, 1fr\) 40px/);
   assert.match(styles, /text-overflow:\s*ellipsis/);
 });

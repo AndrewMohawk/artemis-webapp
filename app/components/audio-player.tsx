@@ -1,7 +1,7 @@
 "use client";
 
-import { Headphones, Pause, Play, RefreshCw, Settings, Square, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Pause, Play, RefreshCw, Settings, Square, X } from "lucide-react";
+import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import "../audio-player.css";
 
 type SinkCapableAudio = HTMLAudioElement & {
@@ -42,6 +42,8 @@ export function AudioPlayer({
   const sinkId = initialOutputDeviceId;
   const [sinkSupported, setSinkSupported] = useState(false);
   const source = availableSources.find((candidate) => !failedSources.has(candidate)) || "";
+  const progress = duration > 0 ? Math.min(100, Math.max(0, (currentTime / duration) * 100)) : 0;
+  const progressStyle = { "--audio-progress": `${progress}%` } as CSSProperties;
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -135,42 +137,63 @@ export function AudioPlayer({
       />
 
       {source ? (
-        <>
-          <div className="audio-transport" aria-label={`Audio controls for ${title}`}>
-            <button onClick={playing ? pause : play} aria-label={playing ? "Pause audio" : "Play audio"}>
-              {playing ? <Pause size={17} /> : <Play size={17} />}
+        <div className="audio-console" aria-label={`Audio controls for ${title}`}>
+          <div className="audio-primary-row">
+            <button className="audio-primary-action" onClick={playing ? pause : play} aria-label={playing ? "Pause audio" : "Play audio"}>
+              {playing ? <Pause size={18} /> : <Play size={18} />}
             </button>
-            <button onClick={stop} aria-label="Stop audio"><Square size={15} /></button>
-            <button
-              className={loop ? "is-active" : ""}
-              onClick={() => changeLoop(!loop)}
-              aria-label={loop ? "Disable audio loop" : "Loop audio"}
-              aria-pressed={loop}
-            >
-              <RefreshCw size={16} />
-            </button>
-            <span>{formatClock(currentTime)}</span>
+
+            <div className="audio-track-meta">
+              <div className="audio-track-title">
+                <strong title={title}>{title}</strong>
+              </div>
+              <span className={playing ? "audio-track-state is-playing" : "audio-track-state"}>
+                {playing ? "Playing now" : "Ready to play"}
+              </span>
+            </div>
+
+            <button className="audio-settings-button" onClick={openSettings} aria-label="Audio player settings"><Settings size={16} /></button>
+          </div>
+
+          <div className="audio-timeline">
             <input
               type="range"
               min="0"
               max={duration || 0}
               step="0.01"
               value={Math.min(currentTime, duration || 0)}
+              style={progressStyle}
               aria-label="Audio position"
+              aria-valuetext={`${formatClock(currentTime)} of ${formatClock(duration)}`}
               onChange={(event) => {
                 const next = Number(event.target.value);
                 if (audioRef.current) audioRef.current.currentTime = next;
                 setCurrentTime(next);
               }}
             />
-            <span>{formatClock(duration)}</span>
-            <button onClick={openSettings} aria-label="Audio player settings"><Settings size={17} /></button>
+            <div className="audio-time-row">
+              <span>{formatClock(currentTime)}</span>
+              <span>{formatClock(duration)}</span>
+            </div>
           </div>
-          <div className="audio-source-name">
-            <Headphones size={14} />
-            <span title={title}>{title}</span>
+
+          <div className="audio-utility-row">
+            <button onClick={stop} aria-label="Stop audio">
+              <Square size={12} />
+              <span>Stop</span>
+            </button>
+            <button
+              className={loop ? "is-active" : ""}
+              onClick={() => changeLoop(!loop)}
+              aria-label={loop ? "Disable audio loop" : "Loop audio"}
+              aria-pressed={loop}
+            >
+              <RefreshCw size={13} />
+              <span>Loop</span>
+            </button>
+            <span className="audio-volume-readout">Volume {Math.round(volume * 100)}%</span>
           </div>
-        </>
+        </div>
       ) : (
         <div className="audio-empty">No audio sample available</div>
       )}
