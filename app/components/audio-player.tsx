@@ -2,6 +2,7 @@
 
 import { Headphones, Pause, Play, RefreshCw, Settings, Square, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import "../audio-player.css";
 
 type SinkCapableAudio = HTMLAudioElement & {
   setSinkId?: (sinkId: string) => Promise<void>;
@@ -165,7 +166,10 @@ export function AudioPlayer({
             <span>{formatClock(duration)}</span>
             <button onClick={openSettings} aria-label="Audio player settings"><Settings size={17} /></button>
           </div>
-          <div className="audio-source-name"><Headphones size={14} /> {title}</div>
+          <div className="audio-source-name">
+            <Headphones size={14} />
+            <span title={title}>{title}</span>
+          </div>
         </>
       ) : (
         <div className="audio-empty">No audio sample available</div>

@@ -1092,7 +1092,7 @@ a {
   min-height: 0;
   height: 100%;
   display: grid;
-  grid-template-columns: minmax(440px, 1fr) clamp(300px, 27vw, 390px);
+  grid-template-columns: minmax(360px, 1fr) clamp(270px, 25vw, 390px);
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -2278,12 +2278,27 @@ a {
   }
 
   .detail-workspace {
-    grid-template-columns: minmax(390px, 1fr) 300px;
+    display: block;
   }
 
   .signal-detail {
+    border-right: 0;
     padding-right: 32px;
     padding-left: 32px;
+  }
+
+  .media-panel {
+    grid-template-columns: minmax(0, 1.2fr) minmax(240px, 0.8fr);
+    align-items: start;
+    padding-top: 0;
+  }
+
+  .waterfall-card {
+    grid-row: span 3;
+  }
+
+  .spectrum-frame {
+    height: clamp(280px, 46vw, 420px);
   }
 }
 

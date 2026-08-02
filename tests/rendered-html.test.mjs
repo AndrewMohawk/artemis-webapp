@@ -68,3 +68,15 @@ test("contains finished metadata and no disposable preview surface", async () =>
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
   await assert.rejects(access(new URL("app\/_sites-preview", projectRoot)));
 });
+
+test("ships the responsive custom audio-player styles", async () => {
+  const [component, styles] = await Promise.all([
+    readFile(new URL("../app/components/audio-player.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/audio-player.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(component, /import "\.\.\/audio-player\.css";/);
+  assert.match(component, /className="audio-source-name"/);
+  assert.match(styles, /grid-template-areas:[\s\S]*"play stop loop \. settings"/);
+  assert.match(styles, /text-overflow:\s*ellipsis/);
+});
