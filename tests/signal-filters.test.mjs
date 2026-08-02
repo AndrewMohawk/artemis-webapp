@@ -9,6 +9,7 @@ import {
 } from "../app/lib/signal-filters.ts";
 
 const signals = JSON.parse(await readFile(new URL("../app/data/signals.json", import.meta.url), "utf8"));
+const catalog = JSON.parse(await readFile(new URL("../app/data/catalog.json", import.meta.url), "utf8"));
 const index = buildSignalIndex(signals);
 const bookmarks = new Set();
 
@@ -66,7 +67,9 @@ test("frequency tolerance checks recorded values rather than the outer min/max s
 
 test("database versions use only real dataset values", () => {
   const versions = [...new Set(signals.map((signal) => signal.added_since))].sort((a, b) => a - b);
-  assert.deepEqual(versions, [65, 70, 71, 72, 73, 74]);
+  assert.ok(versions.length > 0);
+  assert.equal(versions.at(-1), catalog.version);
+  assert.ok(versions.every((version) => Number.isSafeInteger(version) && version <= catalog.version));
 });
 
 test("search uses one case-insensitive substring across signal prose", () => {

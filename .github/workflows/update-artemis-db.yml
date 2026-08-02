@@ -1,0 +1,163 @@
+name: Update Artemis database
+
+on:
+  schedule:
+    - cron: "23 * * * *"
+  workflow_dispatch:
+    inputs:
+      allow_removals:
+        description: Allow more than 10 percent of the existing catalog to be removed
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: artemis-production
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22.13.1
+          cache: npm
+
+      - name: Verify latest release metadata
+        id: release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/discover-artemis-release.mjs app/data/catalog.json "$RUNNER_TEMP/artemis-release.json"
+
+      - name: Determine whether production needs reconciliation
+        id: production
+        env:
+          RELEASE_UPDATE: ${{ steps.release.outputs.update }}
+        run: |
+          bundled_catalog="$(node -p "require('./app/data/catalog.json').version")"
+          public_catalog="$(curl --fail --silent --show-error --max-time 20 https://artemis.andrewmohawk.xyz/api/healthz | jq -r '.catalogVersion // empty')" || true
+          if [ "$RELEASE_UPDATE" = "true" ] || [ "$public_catalog" != "$bundled_catalog" ]; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download and verify official release archive
+        if: steps.release.outputs.update == 'true'
+        run: |
+          archive_url="$(jq -r .archiveUrl "$RUNNER_TEMP/artemis-release.json")"
+          curl --fail --location --retry 3 --retry-all-errors --output "$RUNNER_TEMP/artemis-db.tar" "$archive_url"
+          python3 scripts/verify-artemis-archive.py "$RUNNER_TEMP/artemis-db.tar" \
+            --sha256 "$(jq -r .archiveSha256 "$RUNNER_TEMP/artemis-release.json")" \
+            --bytes "$(jq -r .archiveBytes "$RUNNER_TEMP/artemis-release.json")" \
+            --version "$(jq -r .version "$RUNNER_TEMP/artemis-release.json")"
+
+      - name: Fetch immutable tagged signal records
+        if: steps.release.outputs.update == 'true'
+        run: |
+          tag="$(jq -r .tag "$RUNNER_TEMP/artemis-release.json")"
+          source_commit="$(jq -r .sourceCommit "$RUNNER_TEMP/artemis-release.json")"
+          git clone --filter=blob:none --no-checkout --depth 1 --branch "$tag" https://github.com/AresValley/Artemis-DB.git "$RUNNER_TEMP/artemis-db"
+          git -C "$RUNNER_TEMP/artemis-db" sparse-checkout init --no-cone
+          git -C "$RUNNER_TEMP/artemis-db" sparse-checkout set 'static/*/signal.json'
+          git -C "$RUNNER_TEMP/artemis-db" checkout
+          test "$(git -C "$RUNNER_TEMP/artemis-db" rev-parse HEAD)" = "$source_commit"
+
+      - name: Generate deterministic catalog
+        if: steps.release.outputs.update == 'true'
+        env:
+          ALLOW_REMOVALS: ${{ inputs.allow_removals }}
+        run: |
+          removal_flag=""
+          if [ "$ALLOW_REMOVALS" = "true" ]; then removal_flag="--allow-removals"; fi
+          node scripts/update-artemis-db.mjs \
+            --upstream-dir "$RUNNER_TEMP/artemis-db/static" \
+            --metadata "$RUNNER_TEMP/artemis-release.json" \
+            $removal_flag
+          node scripts/update-artemis-db.mjs \
+            --upstream-dir "$RUNNER_TEMP/artemis-db/static" \
+            --metadata "$RUNNER_TEMP/artemis-release.json" \
+            --check
+
+      - name: Install dependencies
+        if: steps.production.outputs.deploy == 'true'
+        run: npm ci
+
+      - name: Lint
+        if: steps.production.outputs.deploy == 'true'
+        run: npm run lint
+
+      - name: Test production build
+        if: steps.production.outputs.deploy == 'true'
+        run: npm test
+
+      - name: Commit verified catalog
+        if: steps.release.outputs.update == 'true'
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- app/data/signals.json app/data/catalog.json
+          if git diff --cached --quiet; then
+            echo "Release produced no catalog changes" >&2
+            exit 1
+          fi
+          git commit -m "Update Artemis DB to ${RELEASE_TAG}"
+          git push origin HEAD:main
+
+      - name: Configure Wrangler OAuth fallback
+        if: steps.production.outputs.deploy == 'true'
+        env:
+          WRANGLER_OAUTH_CONFIG: ${{ secrets.WRANGLER_OAUTH_CONFIG }}
+        run: |
+          if [ -n "$WRANGLER_OAUTH_CONFIG" ]; then
+            umask 077
+            mkdir -p "$HOME/.config/.wrangler/config"
+            printf '%s' "$WRANGLER_OAUTH_CONFIG" > "$HOME/.config/.wrangler/config/default.toml"
+          fi
+
+      - name: Deploy verified catalog
+        if: steps.production.outputs.deploy == 'true'
+        run: npx --no-install wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Verify public catalog version
+        if: steps.production.outputs.deploy == 'true'
+        run: |
+          EXPECTED_CATALOG="$(node -p "require('./app/data/catalog.json').version")"
+          for attempt in 1 2 3 4 5; do
+            actual_catalog="$(curl --fail --silent --show-error --max-time 20 https://artemis.andrewmohawk.xyz/api/healthz | jq -r '.catalogVersion // empty')" || true
+            if [ "$actual_catalog" = "$EXPECTED_CATALOG" ]; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Public health check did not report catalog v${EXPECTED_CATALOG}" >&2
+          exit 1
+
+      - name: Keep the public repository schedule active
+        if: steps.release.outputs.update != 'true'
+        run: |
+          last_heartbeat="$(cat .github/artemis-updater-heartbeat)"
+          now_epoch="$(date -u +%s)"
+          last_epoch="$(date -u -d "$last_heartbeat" +%s)"
+          if [ $((now_epoch - last_epoch)) -ge 2592000 ]; then
+            date -u +%Y-%m-%d > .github/artemis-updater-heartbeat
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -- .github/artemis-updater-heartbeat
+            git commit -m "Keep Artemis release checks active"
+            git push origin HEAD:main
+          fi

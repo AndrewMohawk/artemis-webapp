@@ -1,3 +1,5 @@
+import catalog from "../../data/catalog.json";
+
 export const dynamic = "force-dynamic";
 
 export async function GET() {
@@ -5,6 +7,9 @@ export async function GET() {
     {
       status: "ok",
       service: "artemis-rf-reference",
+      catalogVersion: catalog.version,
+      catalogTag: catalog.tag,
+      catalogCommit: catalog.sourceCommit,
     },
     {
       headers: {

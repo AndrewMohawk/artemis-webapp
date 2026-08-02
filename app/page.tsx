@@ -46,6 +46,7 @@ import React, {
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { AudioPlayer } from "./components/audio-player";
+import catalogMetadata from "./data/catalog.json";
 import {
   buildSignalIndex,
   countActiveFilterGroups,
@@ -150,8 +151,10 @@ const FullAbout = React.lazy(async () => ({
   default: (await import("./components/artemis-managers")).AboutModal,
 }));
 
+const CATALOG_VERSION = catalogMetadata.version;
+const CATALOG_TAG = catalogMetadata.tag;
 const MEDIA_BASE =
-  "https://raw.githubusercontent.com/AresValley/Artemis-DB/main/static";
+  `https://raw.githubusercontent.com/AresValley/Artemis-DB/${catalogMetadata.sourceCommit}/static`;
 
 function formatEngineering(value: number, kind: "frequency" | "time" = "frequency") {
   if (kind === "time") {
@@ -749,7 +752,7 @@ const MediaPanel = React.memo(function MediaPanel({
       <div className="source-note">
         <Info size={15} />
         <span>
-          Community reference data from Artemis DB v74 and Signal Identification Wiki.
+          Community reference data from Artemis DB {CATALOG_TAG} and Signal Identification Wiki.
         </span>
       </div>
     </aside>
@@ -1124,8 +1127,8 @@ function DatabaseModal({
             <span className="database-mark"><Database size={20} /></span>
             <span>
               <small>COMMUNITY REFERENCE · READ ONLY</small>
-              <strong>SigID Database v74</strong>
-              <em>583 recognized signals</em>
+              <strong>SigID Database {CATALOG_TAG}</strong>
+              <em>{catalogMetadata.signalCount} recognized signals</em>
             </span>
             <span className="current-pill">Current</span>
           </div>
@@ -1175,7 +1178,7 @@ function NewSignalModal({ onClose, onCreate }: { onClose: () => void; onCreate: 
     onCreate({
       pageid: `local-${Date.now()}`,
       title: title.trim(),
-      added_since: 74,
+      added_since: CATALOG_VERSION,
       spectrum: null,
       audio: null,
       category: [category.trim() || "Field observation"],
@@ -1449,7 +1452,7 @@ export default function Home() {
   const activeFilterCount = countActiveFilterGroups(filters);
   const activeLocalDatabase = workspace.databases.find((database) => database.id === workspace.activeDatabaseId) || null;
   const activeDatabaseName = activeLocalDatabase?.name || "SigID Database";
-  const activeDatabaseVersion = activeLocalDatabase?.version || 74;
+  const activeDatabaseVersion = activeLocalDatabase?.version || CATALOG_VERSION;
   const activeDocuments = useMemo(() => workspace.activeDatabaseId === SIGID_DATABASE_ID
     ? workspace.sigidDocuments
     : activeLocalDatabase?.documents || [], [activeLocalDatabase?.documents, workspace.activeDatabaseId, workspace.sigidDocuments]);
@@ -1770,14 +1773,14 @@ export default function Home() {
       const database: LocalDatabase = {
         id: "sigid-export",
         name: "SigID Database",
-        version: 74,
+        version: CATALOG_VERSION,
         createdAt: now,
         updatedAt: now,
         signals: allSignals,
         tags: activeTags,
         documents: workspace.sigidDocuments,
       };
-      downloadText(exportDatabaseBundle(database), "sigid-v74.artemis.json");
+      downloadText(exportDatabaseBundle(database), `sigid-${CATALOG_TAG}.artemis.json`);
     } else {
       const database = workspace.databases.find((candidate) => candidate.id === databaseId);
       if (!database) throw new Error("Database not found.");
@@ -1794,11 +1797,11 @@ export default function Home() {
       if (!response.ok) throw new Error("Update service unavailable");
       const info = await response.json() as { database?: { version?: string }; upstreamApplication?: { version?: string } };
       const latestDatabase = Number(String(info.database?.version || "").replace(/\D/g, ""));
-      const available = Number.isFinite(latestDatabase) && latestDatabase > 74;
+      const available = Number.isFinite(latestDatabase) && latestDatabase > CATALOG_VERSION;
       setUpdateState(available ? "available" : "current");
       setUpdateMessage(available
         ? `SigID ${info.database?.version} is available. The web catalog will update after its verified deployment.`
-        : `Database v74 is current. Upstream Artemis ${info.upstreamApplication?.version || "release information loaded"}.`);
+        : `Database ${CATALOG_TAG} is current. Upstream Artemis ${info.upstreamApplication?.version || "release information loaded"}.`);
     } catch {
       setUpdateState("error");
       setUpdateMessage("Unable to check releases right now.");
@@ -1965,7 +1968,7 @@ export default function Home() {
       {
         id: SIGID_DATABASE_ID,
         name: "SigID Database",
-        version: 74,
+        version: CATALOG_VERSION,
         createdAt: "Community catalog",
         editable: false,
         isSigid: true,

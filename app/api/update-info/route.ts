@@ -1,3 +1,5 @@
+import catalog from "../../data/catalog.json";
+
 const GITHUB_API = "https://api.github.com/repos/AresValley";
 
 type ReleaseResponse = {
@@ -33,6 +35,7 @@ export async function GET() {
       {
         checkedAt: new Date().toISOString(),
         webApplication: { version: "web-1.0", delivery: "Automatic deployment" },
+        bundledDatabase: catalog,
         upstreamApplication: application,
         database,
       },

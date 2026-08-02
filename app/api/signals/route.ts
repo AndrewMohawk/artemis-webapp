@@ -1,13 +1,13 @@
 import signalData from "../../data/signals.json";
+import catalog from "../../data/catalog.json";
 
 export async function GET() {
   return Response.json(
     {
       database: {
-        id: "sigid-v74",
+        id: "sigid",
         name: "SigID Database",
-        version: 74,
-        source: "AresValley/Artemis-DB",
+        ...catalog,
       },
       signals: signalData,
     },

@@ -1,6 +1,6 @@
 # Artemis RF Reference
 
-A fast, responsive browser adaptation of the radio-signal identification workflow from [AresValley/Artemis](https://github.com/AresValley/Artemis). It puts the complete 583-signal SigID v74 catalog, identification filters, reference media, and local field-work tools into a single web workspace.
+A fast, responsive browser adaptation of the radio-signal identification workflow from [AresValley/Artemis](https://github.com/AresValley/Artemis). It puts the current SigID catalog, identification filters, reference media, and local field-work tools into a single web workspace.
 
 **[Open the live application →](https://artemis.andrewmohawk.xyz)**
 
@@ -11,7 +11,7 @@ A fast, responsive browser adaptation of the radio-signal identification workflo
 
 ## What it includes
 
-- The complete SigID v74 catalog with descriptions, frequency, bandwidth, modulation, mode, ACF, location, database-version metadata, spectrum images, audio samples, and source links.
+- The current tagged SigID catalog with descriptions, frequency, bandwidth, modulation, mode, ACF, location, database-version metadata, spectrum images, audio samples, and source links.
 - Instant full-text search and always-visible filters for RF band, frequency, bandwidth, ACF, category, modulation, location, and database version.
 - A visible 10% default tolerance on numeric filters so nearby signals are not hidden by overly exact matching.
 - Responsive desktop and mobile layouts, resizable desktop panes, keyboard navigation, and virtualized result rendering.
@@ -57,6 +57,20 @@ npm run deploy:cloudflare
 The build emits a Cloudflare Worker in `dist/server` and edge-hosted assets in `dist/client`; this is not a static Pages export. The production route is configured in `vite.config.ts`. Forks should replace `artemis.andrewmohawk.xyz/*` and its `zone_name` with a hostname in their own Cloudflare account.
 
 The application does not require D1, R2, KV, application secrets, or an authentication service.
+
+## Automatic database releases
+
+The [`Update Artemis database`](.github/workflows/update-artemis-db.yml) workflow checks the official Artemis release metadata every hour. When AresValley publishes a newer Artemis-DB release, the workflow:
+
+1. requires the official release metadata and GitHub release to agree on the version, archive URL, byte size, and SHA-256 digest;
+2. downloads and verifies the release archive and its embedded SQLite database version;
+3. checks out only `static/*/signal.json` from the immutable release tag, without running upstream code;
+4. validates every record, unique page ID, version, media field, and a catalog-shrink safety threshold;
+5. regenerates `signals.json` and its provenance manifest deterministically;
+6. runs lint, the production build, and the complete test suite;
+7. commits the generated files and deploys that exact revision to Cloudflare Workers.
+
+The production repository needs a `CLOUDFLARE_ACCOUNT_ID` Actions variable and either a `CLOUDFLARE_API_TOKEN` secret or a Wrangler OAuth configuration stored as `WRANGLER_OAUTH_CONFIG`. A dedicated API token restricted to Workers Scripts and Workers Routes for the target account and zone is preferred. A manual workflow run can explicitly allow an unusually large upstream removal after review; scheduled updates always fail closed. The hourly job also reconciles a failed deployment on its next run even when the catalog commit already succeeded. A monthly heartbeat commit keeps GitHub from disabling scheduled workflows after 60 days of inactivity in a public repository.
 
 ## Local persistence and privacy
 

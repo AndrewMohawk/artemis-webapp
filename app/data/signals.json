@@ -442,7 +442,7 @@
     ],
     "acf": [
       {
-        "value": 25.0,
+        "value": 25,
         "description": "Main"
       }
     ],
@@ -3658,7 +3658,7 @@
     ],
     "acf": [
       {
-        "value": 40.0,
+        "value": 40,
         "description": "Capture probe block"
       },
       {
@@ -4032,7 +4032,7 @@
     ],
     "acf": [
       {
-        "value": 150.0,
+        "value": 150,
         "description": "Main"
       }
     ],
@@ -4139,7 +4139,7 @@
     ],
     "acf": [
       {
-        "value": 400.0,
+        "value": 400,
         "description": "Frame"
       }
     ],
@@ -5191,7 +5191,7 @@
     ],
     "acf": [
       {
-        "value": 10.0,
+        "value": 10,
         "description": "Main"
       }
     ],
@@ -8834,11 +8834,11 @@
     ],
     "acf": [
       {
-        "value": 20.0,
+        "value": 20,
         "description": "Frame"
       },
       {
-        "value": 420.0,
+        "value": 420,
         "description": "Superframe"
       }
     ],
@@ -9030,7 +9030,7 @@
     ],
     "acf": [
       {
-        "value": 1000.0,
+        "value": 1000,
         "description": "Main"
       }
     ],
@@ -9356,11 +9356,11 @@
     ],
     "acf": [
       {
-        "value": 5.0,
+        "value": 5,
         "description": "Main"
       },
       {
-        "value": 10.0,
+        "value": 10,
         "description": "Main"
       }
     ],
@@ -9575,7 +9575,7 @@
     ],
     "acf": [
       {
-        "value": 10.0,
+        "value": 10,
         "description": "Main"
       }
     ],
@@ -9654,11 +9654,11 @@
     ],
     "acf": [
       {
-        "value": 60.0,
+        "value": 60,
         "description": "Frame"
       },
       {
-        "value": 30.0,
+        "value": 30,
         "description": "Slot"
       }
     ],
@@ -9836,11 +9836,11 @@
     ],
     "acf": [
       {
-        "value": 80.0,
+        "value": 80,
         "description": "Frame"
       },
       {
-        "value": 320.0,
+        "value": 320,
         "description": "Superframe"
       }
     ],
@@ -9919,7 +9919,7 @@
     ],
     "acf": [
       {
-        "value": 400.0,
+        "value": 400,
         "description": "Main"
       }
     ],
@@ -10190,7 +10190,7 @@
     ],
     "acf": [
       {
-        "value": 0.0,
+        "value": 0,
         "description": "Depending on mode and bandwidth"
       }
     ],
@@ -11590,11 +11590,11 @@
     ],
     "acf": [
       {
-        "value": 60.0,
+        "value": 60,
         "description": "edacs48"
       },
       {
-        "value": 30.0,
+        "value": 30,
         "description": "edacs96"
       }
     ],
@@ -11800,7 +11800,7 @@
     ],
     "acf": [
       {
-        "value": 740.0,
+        "value": 740,
         "description": "Main"
       }
     ],
@@ -13953,7 +13953,7 @@
     ],
     "acf": [
       {
-        "value": 2000.0,
+        "value": 2000,
         "description": "Main"
       }
     ],
@@ -14793,7 +14793,7 @@
     ],
     "acf": [
       {
-        "value": 100.0,
+        "value": 100,
         "description": "Main"
       }
     ],
@@ -15679,7 +15679,7 @@
     ],
     "acf": [
       {
-        "value": 490.0,
+        "value": 490,
         "description": "Main"
       }
     ],
@@ -15961,7 +15961,7 @@
     ],
     "acf": [
       {
-        "value": 135.0,
+        "value": 135,
         "description": "Main"
       }
     ],
@@ -18066,7 +18066,7 @@
     ],
     "acf": [
       {
-        "value": 0.0,
+        "value": 0,
         "description": "Header (variable)"
       },
       {
@@ -20308,7 +20308,7 @@
     ],
     "acf": [
       {
-        "value": 200.0,
+        "value": 200,
         "description": "Header"
       },
       {
@@ -20823,7 +20823,7 @@
     ],
     "acf": [
       {
-        "value": 120.0,
+        "value": 120,
         "description": "Main"
       }
     ],
@@ -21460,7 +21460,7 @@
     ],
     "acf": [
       {
-        "value": 72.0,
+        "value": 72,
         "description": "Main"
       }
     ],
@@ -22257,7 +22257,7 @@
     ],
     "acf": [
       {
-        "value": 80.0,
+        "value": 80,
         "description": "Main"
       }
     ],
@@ -23623,7 +23623,7 @@
     ],
     "acf": [
       {
-        "value": 1000.0,
+        "value": 1000,
         "description": "Main"
       }
     ],
@@ -24933,11 +24933,11 @@
     ],
     "acf": [
       {
-        "value": 960.0,
+        "value": 960,
         "description": "Primary"
       },
       {
-        "value": 160.0,
+        "value": 160,
         "description": "Secondary"
       }
     ],
@@ -25578,7 +25578,7 @@
     ],
     "acf": [
       {
-        "value": 129.0,
+        "value": 129,
         "description": "Main"
       }
     ],
@@ -26471,7 +26471,7 @@
     ],
     "acf": [
       {
-        "value": 150.0,
+        "value": 150,
         "description": "Main"
       }
     ],
@@ -27377,7 +27377,7 @@
     ],
     "acf": [
       {
-        "value": 4.0,
+        "value": 4,
         "description": "Main"
       }
     ],
@@ -28036,11 +28036,11 @@
     ],
     "acf": [
       {
-        "value": 1000.0,
+        "value": 1000,
         "description": "Primary"
       },
       {
-        "value": 100.0,
+        "value": 100,
         "description": "Secondary"
       }
     ],
@@ -29240,7 +29240,7 @@
     ],
     "acf": [
       {
-        "value": 450.0,
+        "value": 450,
         "description": "Main"
       }
     ],
@@ -29417,7 +29417,7 @@
         "description": "Main"
       },
       {
-        "value": 78.0,
+        "value": 78,
         "description": "Main"
       },
       {
@@ -29484,7 +29484,7 @@
     ],
     "acf": [
       {
-        "value": 0.0,
+        "value": 0,
         "description": "Line per minute."
       }
     ],
@@ -30151,7 +30151,7 @@
     ],
     "acf": [
       {
-        "value": 200.0,
+        "value": 200,
         "description": "Header"
       },
       {
@@ -30845,7 +30845,7 @@
         "description": "Slot"
       },
       {
-        "value": 1020.0,
+        "value": 1020,
         "description": "Superframe"
       }
     ],
@@ -30908,7 +30908,7 @@
     ],
     "acf": [
       {
-        "value": 20.0,
+        "value": 20,
         "description": "Main"
       }
     ],
@@ -32565,7 +32565,7 @@
     ],
     "acf": [
       {
-        "value": 1000.0,
+        "value": 1000,
         "description": "Frame"
       },
       {
@@ -33422,7 +33422,7 @@
     ],
     "acf": [
       {
-        "value": 400.0,
+        "value": 400,
         "description": "Main"
       }
     ],

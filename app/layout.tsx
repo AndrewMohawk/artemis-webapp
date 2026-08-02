@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import catalog from "./data/catalog.json";
 import { Geist, Geist_Mono } from "next/font/google";
 import { headers } from "next/headers";
 import "./globals.css";
@@ -20,7 +21,7 @@ export async function generateMetadata(): Promise<Metadata> {
   const origin = `${protocol}://${host}`;
   const title = "Artemis — RF Signal Reference";
   const description =
-    "Search, compare, hear, and identify 583 radio-frequency signals from the community-powered SigID reference library.";
+    `Search, compare, hear, and identify ${catalog.signalCount} radio-frequency signals from the community-powered SigID reference library.`;
 
   return {
     metadataBase: new URL(origin),
